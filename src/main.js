@@ -806,7 +806,7 @@ $('tPause').addEventListener('click', () => { time.paused = !time.paused; });
 $('tNow').addEventListener('click', () => { time.ms = Date.now(); time.rateIdx = 7; time.paused = false; });
 
 const dateDialog = $('dateDialog'), dateInput = $('dateInput');
-const minTime = Date.parse(dateInput.min), maxTime = Date.parse(dateInput.max);
+const minTime = Date.UTC(1800, 0, 1), maxTime = Date.UTC(2101, 0, 1) - 1000;
 const clampTime = (ms) => Math.min(maxTime, Math.max(minTime, ms));
 function dateInputValue(ms) {
   const d = new Date(ms);
