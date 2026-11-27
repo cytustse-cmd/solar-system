@@ -1066,9 +1066,11 @@ $('clock').addEventListener('click', openDate);
 $('tDate').addEventListener('click', openDate);
 dateInput.addEventListener('change', () => {
   const ms = new Date(dateInput.value).getTime();
-  if (!Number.isFinite(ms)) return;
-  time.ms = clampTime(ms);
-  if (time.ms !== ms) dateInput.value = dateInputValue(time.ms);
+  if (ms >= minTime && ms <= maxTime) time.ms = ms;
+});
+dateDialog.querySelector('form').addEventListener('submit', () => {
+  const ms = new Date(dateInput.value).getTime();
+  if (ms < minTime || ms > maxTime) time.ms = clampTime(ms);
 });
 
 function setOrbit(b) {
