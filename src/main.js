@@ -81,7 +81,7 @@ const BODIES = [
 ];
 const B = Object.fromEntries(BODIES.map((b) => [b.id, b]));
 for (const b of BODIES) { b.pos = new THREE.Vector3(); b.rel = new THREE.Vector3(); b.basis = new THREE.Matrix4(); b.tilt = new THREE.Matrix4(); }
-const issState = { tle: null, fetchedAt: -Infinity, trackAt: -Infinity, restoreOrbit: false };
+const issState = { tle: null, fetchedAt: -Infinity, trackAt: -Infinity, restoreOrbit: null };
 
 // ---------- 着色器公共片段 ----------
 const eclipseUniforms = (occluder) => ({
@@ -660,9 +660,9 @@ async function loadIss() {
     issState.trackAt = -Infinity;
     if (issState.restoreOrbit && selected === B.iss && nav.mode === 'orbit' && nav.ref === B.earth) {
       updateEphemeris();
-      if (B.iss.available) setOrbit(B.iss);
+      if (B.iss.available) setOrbit(B.iss, issState.restoreOrbit.direction);
     }
-    issState.restoreOrbit = false;
+    issState.restoreOrbit = null;
   } catch {}
 }
 
@@ -1073,10 +1073,17 @@ dateDialog.querySelector('form').addEventListener('submit', () => {
   if (ms < minTime || ms > maxTime) time.ms = clampTime(ms);
 });
 
-function setOrbit(b) {
+function orbitDirection(param) {
+  const parts = param?.split(',');
+  if (parts?.length !== 2 || parts.some((s) => !s.trim())) return null;
+  const [az, alt] = parts.map(Number);
+  if (!(Math.abs(az) <= 180 && Math.abs(alt) <= 90)) return null;
+  return new THREE.Vector3().setFromSphericalCoords(1, (90 - alt) * DEG, az * DEG);
+}
+function setOrbit(b, direction = null) {
   nav.mode = 'orbit'; nav.ref = b; nav.fly = null;
   nav.dragX = nav.dragY = 0; nav.zoom = 1;
-  nav.offset.copy(viewDir(b) || new THREE.Vector3(0, 0, 1)).multiplyScalar(b.R * b.view);
+  nav.offset.copy(direction || viewDir(b) || new THREE.Vector3(0, 0, 1)).multiplyScalar(b.R * b.view);
   camWorld.copy(b.pos).add(nav.offset);
   camera.fov = 60; camera.updateProjectionMatrix();
   selectBody(b);
@@ -1091,7 +1098,7 @@ function restoreFromHash() {
   time.paused = params.get('p') === '1';
   const id = params.get('b');
   const b = Object.hasOwn(B, id) ? B[id] : B.earth;
-  issState.restoreOrbit = false;
+  issState.restoreOrbit = null;
   updateEphemeris();
   updateOrbitGeometry(EPH.daysSinceJ2000(time.ms), true);
   const number = (key, min, max, fallback) => {
@@ -1106,21 +1113,32 @@ function restoreFromHash() {
     skyState.locationRequest++;
     enterSky(...(valid ? [lat, lon, city || '链接地点'] : [...CITIES.北京, '北京（链接坐标无效）']), az, alt, fov);
     selectBody(Object.hasOwn(B, id) ? b : B.moon);
-  } else if (b.available === false) {
-    setOrbit(B.earth);
-    selectBody(b);
-    issState.restoreOrbit = !issState.tle;
-  } else setOrbit(b);
+  } else {
+    const direction = orbitDirection(params.get('o'));
+    if (b.available === false) {
+      setOrbit(B.earth);
+      selectBody(b);
+      if (!issState.tle) issState.restoreOrbit = { direction };
+    } else setOrbit(b, direction);
+  }
 }
 addEventListener('hashchange', restoreFromHash);
 
 function viewHash() {
   const inSky = nav.mode === 'sky';
-  const params = new URLSearchParams({ b: inSky || (issState.restoreOrbit && selected === B.iss) ? selected.id : nav.ref.id });
+  const pending = issState.restoreOrbit && selected === B.iss;
+  const params = new URLSearchParams({ b: inSky || pending ? selected.id : nav.ref.id });
   if (inSky) {
     const { latitude, longitude } = skyState.observer;
     params.set('v', 'sky'); params.set('lat', latitude); params.set('lon', longitude);
     params.set('az', skyState.az.toFixed(3)); params.set('alt', skyState.alt.toFixed(3)); params.set('fov', camera.fov.toFixed(3));
+  } else if (nav.mode === 'orbit' || nav.mode === 'fly') {
+    const dir = pending ? issState.restoreOrbit.direction :
+      nav.mode === 'fly' ? nav.fly.u0.clone().applyQuaternion(nav.fly.qd) : nav.offset;
+    if (dir) {
+      const sph = new THREE.Spherical().setFromVector3(dir);
+      params.set('o', `${(sph.theta / DEG).toFixed(3)},${(90 - sph.phi / DEG).toFixed(3)}`);
+    }
   }
   if (!isLive()) params.set('t', new Date(time.ms).toISOString());
   if (time.rateIdx !== 7) params.set('r', time.rateIdx);
