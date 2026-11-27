@@ -1028,8 +1028,10 @@ function frame(now) {
   B.sun.mat.uniforms.pole.value.setFromMatrixColumn(B.sun.basis, 1).normalize();
   B.sun.mat.uniforms.toEarth.value.copy(B.earth.pos).sub(B.sun.pos).normalize();
   setEarthMonth(new Date(time.ms).getUTCMonth());
-  if (Date.now() - cloudState.at > 1800000) loadLiveClouds();
-  if (Date.now() - sunState.at > 900000) loadSdo();
+  if (navigator.onLine) {
+    if (Date.now() - cloudState.at > 1800000) loadLiveClouds();
+    if (Date.now() - sunState.at > 900000) loadSdo();
+  }
 
   updateOrbitGeometry(d);
   for (const id of ORBIT_IDS) orbitLines[id].position.copy(sunRel);
