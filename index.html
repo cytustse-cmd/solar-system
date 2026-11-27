@@ -41,7 +41,7 @@
   <label><input type="checkbox" id="optLabels" checked /> 天体标签</label>
   <label><input type="checkbox" id="optConst" /> 星座连线与亮星名</label>
   <label><input type="checkbox" id="optMilky" checked /> 银河背景</label>
-  <label><input type="checkbox" id="optBelt" checked /> 小行星带（示意）</label>
+  <label><input type="checkbox" id="optBelt" checked /> 小行星（JPL 真实数据）</label>
   <div class="srow"><span>飞行速度倍率</span><span id="speedVal">×1</span></div>
   <input type="range" id="speedRange" min="-3" max="3" step="0.1" value="0" />
 </div>
@@ -64,7 +64,7 @@
   <p><b>自由飞行</b>：拖动转向；电脑用 W/A/S/D 前后左右，R/F 升降，Q/E 翻滚，按住 Shift 加速；手机用左下摇杆和右下“升/降”。速度会随距天体表面的高度自动调整。</p>
   <p>点击天体名称或“天体”列表即可飞往该天体，飞到后自动进入环绕模式并随其公转。</p>
   <p>数字键 0–9：太阳、水星…冥王星。</p>
-  <p class="muted">行星位置按 NASA JPL 轨道根数、月球按 Schlyter 月球理论、木卫按 Meeus 算法、自转按 IAU 参数实时计算；恒星来自依巴谷星表（亮于 6 等），银河为 ESO 全天图。小行星带为示意分布。</p>
+  <p class="muted">行星位置按 VSOP87 / TOP2013 理论、月球按 ELP/MPP02、木卫按 L1.2 理论、自转按 IAU 2015 参数与 IAU2000B 章动实时计算（与 NASA JPL Horizons 对比角误差约 1–15 角秒）；恒星来自依巴谷星表（亮于 6 等），银河为 ESO 全天图；地表为当月 NASA Blue Marble，云层为每 3 小时更新的实时全球云图（EUMETSAT/NOAA，经 matteason/live-cloud-maps），太阳朝向地球的一面为 NASA SDO/HMI 最新图像（实时黑子）；其余行星纹理来自 Solar System Scope（CC BY 4.0）；小行星为 NASA JPL 小天体数据库中 H&lt;15 的约 8.5 万颗真实天体。</p>
   <p class="muted"><a href="https://app.devin.ai/sessions/1d2f5d0c85624bcfb95bed7e3d260b0f" target="_blank">提出修改</a></p>
   <button id="helpClose" class="btn accent">开始漫游</button>
 </div>
