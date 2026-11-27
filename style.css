@@ -12,7 +12,8 @@ html,body { margin:0; height:100%; overflow:hidden; background:#000; color:var(-
 .muted { color:var(--muted); }
 a { color:#8db4ff; }
 #hud { top:calc(10px + env(safe-area-inset-top)); left:calc(10px + env(safe-area-inset-left)); min-width:190px; font-variant-numeric:tabular-nums; }
-#clock { font-size:15px; font-weight:600; }
+#clock { padding:0; border:0; background:none; color:inherit; font:inherit; font-size:15px; font-weight:600; cursor:pointer; }
+#clock:hover { color:#8db4ff; }
 #sync { font-size:12px; margin:2px 0 6px; color:#7ee0a1; }
 #sync.off { color:#ffcf6e; }
 .row { display:flex; justify-content:space-between; gap:12px; line-height:1.7; }
@@ -21,6 +22,8 @@ a { color:#8db4ff; }
 #infoName { font-size:16px; font-weight:600; }
 #infoBody { color:var(--muted); font-size:12px; line-height:1.6; margin-top:2px; }
 #topbar { position:fixed; top:calc(10px + env(safe-area-inset-top)); right:calc(10px + env(safe-area-inset-right)); display:flex; gap:6px; z-index:11; }
+#shareToast { top:calc(54px + env(safe-area-inset-top)); right:calc(10px + env(safe-area-inset-right)); z-index:12; }
+#shareToast:empty { opacity:0; pointer-events:none; }
 .drop { top:calc(54px + env(safe-area-inset-top)); right:calc(10px + env(safe-area-inset-right)); max-height:70vh; overflow:auto; width:220px; }
 #bodiesPanel .grp { color:var(--muted); font-size:11px; margin:8px 0 4px; }
 #bodiesPanel .grp:first-child { margin-top:0; }
@@ -31,6 +34,10 @@ a { color:#8db4ff; }
 .srow { display:flex; justify-content:space-between; margin-top:8px; color:var(--muted); }
 #timebar { bottom:calc(12px + env(safe-area-inset-bottom)); left:50%; transform:translateX(-50%); display:flex; align-items:center; gap:6px; padding:6px 8px; white-space:nowrap; }
 #tRate { min-width:86px; text-align:center; font-variant-numeric:tabular-nums; }
+#dateDialog { color:var(--text); color-scheme:dark; background:#0c1018; width:min(310px, 92vw); }
+#dateDialog::backdrop { background:rgba(0,0,0,.6); }
+#dateDialog form { display:grid; gap:10px; }
+#dateInput { width:100%; padding:7px 8px; border:1px solid var(--border); border-radius:8px; color:inherit; font:inherit; }
 #modeBtn { position:fixed; z-index:10; right:calc(12px + env(safe-area-inset-right)); bottom:calc(70px + env(safe-area-inset-bottom)); background:var(--panel); }
 #joy { position:fixed; z-index:10; left:calc(22px + env(safe-area-inset-left)); bottom:calc(76px + env(safe-area-inset-bottom)); width:120px; height:120px; border-radius:50%; border:1px solid var(--border); background:rgba(255,255,255,.05); display:none; touch-action:none; }
 #knob { position:absolute; left:50%; top:50%; width:50px; height:50px; margin:-25px 0 0 -25px; border-radius:50%; background:rgba(255,255,255,.25); }
@@ -56,8 +63,10 @@ body.touch #vbtns { display:flex; }
 #ltext { color:var(--muted); font-size:12px; }
 @media (max-width: 640px) {
   html,body { font-size:12px; }
-  #hud { min-width:150px; padding:7px 9px; }
+  #hud { min-width:150px; max-width:calc(100vw - 158px); padding:7px 9px; }
   #clock { font-size:13px; }
+  #topbar { gap:4px; }
+  #topbar .btn { padding:6px 7px; }
   #info { top:auto; bottom:calc(66px + env(safe-area-inset-bottom)); max-width:min(300px, 56vw); padding:6px 9px; left:auto; right:auto; transform:none; left:50%; translate:-50% 0; }
   body.touch #info { bottom:calc(210px + env(safe-area-inset-bottom)); }
   #infoBody { font-size:11px; }
