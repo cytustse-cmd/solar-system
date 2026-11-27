@@ -673,7 +673,8 @@ function setBasis(b, ax, W = true) {
   b.basis.makeBasis(vX, vZ, vY.negate());
 }
 function updateEphemeris() {
-  const { t, P, gal } = EPH.state(time.ms);
+  const apparent = nav.mode === 'sky' || $('optApparent').checked;
+  const { t, P, gal } = EPH.state(time.ms, apparent);
   for (const b of BODIES) {
     if (b.id === 'earth' && nav.mode === 'sky') { setBasis(b, EPH.earthFixed(t)); continue; }
     const o = EPH.orient(b.id, t);
@@ -695,11 +696,12 @@ function updateEphemeris() {
   const iss = ISS.position(issState.tle, t);
   B.iss.available = !!iss;
   if (iss) toScene(iss, B.iss.pos).add(B.earth.pos);
-  toScene(EPH.eclipseSun(t), earthEclipse.eclipseSun.value);
-  earthEclipse.eclipseOccluder.value.copy(B.moon.pos).sub(B.earth.pos);
+  if (apparent) earthEclipse.eclipseSun.value.copy(B.sun.pos).sub(B.earth.pos);
+  else toScene(EPH.eclipseSun(t), earthEclipse.eclipseSun.value);
+  toScene(EPH.moonGeo(t), earthEclipse.eclipseOccluder.value);
   moonEclipse.eclipseSun.value.copy(earthEclipse.eclipseSun.value).sub(earthEclipse.eclipseOccluder.value);
   moonEclipse.eclipseOccluder.value.copy(earthEclipse.eclipseOccluder.value).negate();
-  return t;
+  return { t, P };
 }
 
 // ---------- 时间 ----------
@@ -1100,6 +1102,7 @@ function restoreFromHash() {
   time.ms = Number.isFinite(ms) ? clampTime(ms) : Date.now();
   time.rateIdx = /^\d+$/.test(rate) && Number(rate) < RATES.length ? Number(rate) : 7;
   time.paused = params.get('p') === '1';
+  $('optApparent').checked = params.get('ap') === '1';
   const id = params.get('b');
   const b = Object.hasOwn(B, id) ? B[id] : B.earth;
   issState.restoreOrbit = null;
@@ -1145,6 +1148,7 @@ function viewHash() {
       params.set('o', `${(sph.theta / DEG).toFixed(3)},${(90 - sph.phi / DEG).toFixed(3)}`);
     }
   }
+  if ($('optApparent').checked) params.set('ap', '1');
   if (!isLive()) params.set('t', new Date(time.ms).toISOString());
   if (time.rateIdx !== 7) params.set('r', time.rateIdx);
   if (time.paused) params.set('p', '1');
@@ -1364,14 +1368,13 @@ function updateLabels() {
 
 // ---------- 主循环 ----------
 const scaleM = new THREE.Matrix4();
-const jupiterShift = new THREE.Vector3();
-function updateSkyScene(t, inSky) {
+function updateSkyScene(t, P, inSky) {
   B.earth.obj.visible = !inSky;
   ground.visible = inSky;
   let light = 0;
   if (inSky) {
     ground.quaternion.setFromUnitVectors(UP, skyState.up);
-    for (const b of BODIES) skyState.apparent[b.id] = EPH.skyPosition(b.id, t, skyState.observer);
+    skyState.apparent = EPH.skyPositions(t, P, skyState.observer);
     light = THREE.MathUtils.smoothstep(skyState.apparent.sun.alt, -18, 0);
   }
   starFade.value = 1 - light;
@@ -1390,10 +1393,10 @@ function frame(now) {
   }
   if (isLive()) time.ms = Date.now();
   const d = EPH.daysSinceJ2000(time.ms);
-  const t = updateEphemeris();
+  const { t, P } = updateEphemeris();
   updateNav(dt);
   const inSky = nav.mode === 'sky';
-  updateSkyScene(t, inSky);
+  updateSkyScene(t, P, inSky);
 
   for (const b of BODIES) {
     if (b === B.iss) b.obj.visible = b.available;
@@ -1401,11 +1404,7 @@ function frame(now) {
     b.rel.copy(b.pos).sub(camWorld);
     if (inSky) {
       const apparent = skyState.apparent[b.id];
-      if (apparent) {
-        if (b === B.jupiter) jupiterShift.copy(b.rel).negate();
-        horizontalDirection(apparent.az, apparent.alt, b.rel).multiplyScalar(apparent.distance);
-        if (b === B.jupiter) jupiterShift.add(b.rel);
-      } else if (b.parent === 'jupiter') b.rel.add(jupiterShift);
+      if (apparent) horizontalDirection(apparent.az, apparent.alt, b.rel).multiplyScalar(apparent.distance);
     }
     b.obj.position.copy(b.rel);
     if (b.id !== 'sun' || true) {
@@ -1445,7 +1444,7 @@ function frame(now) {
 
   if (!inSky) updateOrbitGeometry(d);
   if (orbitGroup.visible) updateIssOrbit(t);
-  for (const id of ORBIT_IDS) orbitLines[id].position.copy(sunRel);
+  for (const id of ORBIT_IDS) orbitLines[id].position.copy(camWorld).negate();
   moonOrbit.position.copy(B.earth.rel);
   galOrbits.forEach((l) => l.position.copy(B.jupiter.rel));
   for (const l of orbitGroup.children) {
@@ -1454,7 +1453,7 @@ function frame(now) {
     const r = b.rel.length() / b.R;
     l.material.opacity = l.userData.baseOp * THREE.MathUtils.clamp((r - 8) / 60, 0, 1);
   }
-  belt.position.copy(sunRel);
+  belt.position.copy(camWorld).negate();
   belt.material.uniforms.dt.value = d - AST_EPOCH;
 
   renderer.render(scene, camera);

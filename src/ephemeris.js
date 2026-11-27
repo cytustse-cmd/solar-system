@@ -65,11 +65,20 @@ export function earthFixed(t) {
 
 export function groundObserver(lat, lon) { return new A.Observer(lat, lon, 2); }
 
-export function skyPosition(id, t, observer) {
-  if (!Object.hasOwn(BODY, id) || id === 'earth' || id === 'emb') return null;
-  const eq = A.Equator(BODY[id], t, observer, true, true);
-  const hor = A.Horizon(t, observer, eq.ra, eq.dec, 'normal');
-  return { alt: hor.altitude, az: hor.azimuth, distance: eq.dist * AU };
+export function skyPositions(t, P, observer) {
+  const geo = A.ObserverVector(t, observer, false);
+  const rot = A.Rotation_EQJ_EQD(t);
+  const [ex, ey, ez] = P.earth;
+  const out = {};
+  for (const [id, [px, py, pz]] of Object.entries(P)) {
+    if (id === 'earth') continue;
+    const x = (px - ex) / AU, y = (py - ey) / AU, z = (pz - ez) / AU;
+    const top = new A.Vector(x - geo.x, C * y - S * z - geo.y, S * y + C * z - geo.z, t);
+    const eq = A.EquatorFromVector(A.RotateVector(rot, top));
+    const hor = A.Horizon(t, observer, eq.ra, eq.dec, 'normal');
+    out[id] = { alt: hor.altitude, az: hor.azimuth, distance: eq.dist * AU };
+  }
+  return out;
 }
 
 export function skyRiseSet(id, start, end, observer) {
@@ -90,13 +99,27 @@ export function skyRiseSet(id, start, end, observer) {
   return (ms) => crossings.map((times) => times.find((t) => t >= ms && t <= ms + 366 * 86400000) ?? null);
 }
 
-export function state(ms) {
+export function state(ms, apparent = false) {
   const t = A.MakeTime(new Date(ms));
-  const P = { sun: [0, 0, 0] };
-  for (const id of PLANETS) P[id] = helio(id, t);
-  const mg = moonGeo(t);
-  P.moon = P.earth.map((v, i) => v + mg[i]);
-  const g = galilean(t);
+  const P = { earth: helio('earth', t) };
+  const fromEarth = (offset) => P.earth.map((v, i) => v + offset[i]);
+  let jupiterTime = t;
+  if (apparent) {
+    for (const id of ['sun', ...PLANETS, 'moon']) {
+      if (id === 'earth') continue;
+      // GeoVector 保留接收时刻，且月球分支不回溯；木星的发光时刻也用于它的卫星。
+      const vector = id === 'jupiter' || id === 'moon'
+        ? A.BackdatePosition(t, A.Body.Earth, BODY[id], true)
+        : A.GeoVector(BODY[id], t, true);
+      if (id === 'jupiter') jupiterTime = vector.t;
+      P[id] = fromEarth(vecKm(vector));
+    }
+  } else {
+    P.sun = [0, 0, 0];
+    for (const id of PLANETS) if (id !== 'earth') P[id] = helio(id, t);
+    P.moon = fromEarth(moonGeo(t));
+  }
+  const g = galilean(jupiterTime);
   GAL.forEach((id, i) => { P[id] = P.jupiter.map((v, j) => v + g[i][j]); });
   return { t, P, gal: g };
 }
