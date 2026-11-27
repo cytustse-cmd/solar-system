@@ -39,6 +39,7 @@ export const GAL = ['io', 'europa', 'ganymede', 'callisto'];
 
 // 日心黄道 J2000 坐标（km）
 export function helio(id, t) { return vecKm(A.HelioVector(BODY[id], t)); }
+export function eclipseSun(t) { return vecKm(A.GeoVector(A.Body.Sun, t, true)); }
 export function moonGeo(t) { return vecKm(A.GeoMoon(t)); }
 export function galilean(t) {
   const m = A.JupiterMoons(t);
@@ -50,6 +51,43 @@ export function orient(id, t) {
   if (!(id in BODY) || id === 'emb') return null;
   const ax = A.RotationAxis(BODY[id], t);
   return [ax.ra * 15, ax.dec, ax.spin];
+}
+
+export function earthFixed(t) {
+  const angle = A.SiderealTime(t) * 15 * DEG;
+  const c = Math.cos(angle), s = Math.sin(angle), rot = A.Rotation_EQD_EQJ(t);
+  const axis = (x, y, z) => {
+    const v = A.RotateVector(rot, new A.Vector(x, y, z, t));
+    return eqToEcl([v.x, v.y, v.z]);
+  };
+  return { X: axis(c, s, 0), Y: axis(-s, c, 0), Z: axis(0, 0, 1) };
+}
+
+export function groundObserver(lat, lon) { return new A.Observer(lat, lon, 2); }
+
+export function skyPosition(id, t, observer) {
+  if (!Object.hasOwn(BODY, id) || id === 'earth' || id === 'emb') return null;
+  const eq = A.Equator(BODY[id], t, observer, true, true);
+  const hor = A.Horizon(t, observer, eq.ra, eq.dec, 'normal');
+  return { alt: hor.altitude, az: hor.azimuth, distance: eq.dist * AU };
+}
+
+export function skyRiseSet(id, start, end, observer) {
+  if (!Object.hasOwn(BODY, id) || id === 'earth' || id === 'emb') return null;
+  const limit = end + 366 * 86400000;
+  const crossings = [1, -1].map((direction) => {
+    const times = [];
+    for (let ms = start;;) {
+      const peak = A.SearchRiseSet(BODY[id], observer, direction, new Date(ms), (limit - ms) / 86400000, observer.height);
+      if (!peak) break;
+      const next = peak.date.getTime();
+      times.push(next);
+      if (next >= end) break;
+      ms = next + 1000;
+    }
+    return times;
+  });
+  return (ms) => crossings.map((times) => times.find((t) => t >= ms && t <= ms + 366 * 86400000) ?? null);
 }
 
 export function state(ms) {
@@ -78,4 +116,105 @@ export function track(id, ms, n) {
     out.set(v, k * 3);
   }
   return out;
+}
+
+const SEASONS = [
+  ['mar_equinox', '春分', '太阳由南向北越过天赤道'],
+  ['jun_solstice', '夏至', '太阳直射位置最偏北'],
+  ['sep_equinox', '秋分', '太阳由北向南越过天赤道'],
+  ['dec_solstice', '冬至', '太阳直射位置最偏南'],
+];
+
+function surfaceUmbra(t) {
+  // 与 Astronomy Engine 的 GeoidIntersect 一致：将地球椭球拉伸成球后求日侧交点。
+  const rot = A.Rotation_EQJ_EQD(t);
+  const m = A.RotateVector(rot, A.GeoMoon(t)), s = A.RotateVector(rot, A.GeoVector(A.Body.Sun, t, true));
+  const flattening = 0.996647180302104;
+  const x = m.x - s.x, y = m.y - s.y, z = (m.z - s.z) / flattening, mz = m.z / flattening;
+  const norm = Math.hypot(x, y, z);
+  const along = -(m.x * x + m.y * y + mz * z) / norm;
+  const miss = Math.hypot(m.x + along * x / norm, m.y + along * y / norm, mz + along * z / norm);
+  const radicand = (6378.1366 / AU) ** 2 - miss ** 2;
+  if (radicand < 0) return null;
+  const fraction = (along - Math.sqrt(radicand)) / norm;
+  return 1736 - (695700 - 1736) * fraction;
+}
+
+function solarKind({ kind, peak }) {
+  if (kind === 'partial') return '日偏食';
+  const fallback = kind === 'total' ? '日全食' : '日环食';
+  const center = surfaceUmbra(peak);
+  if (center === null) return fallback;
+  const umbra = (minutes) => surfaceUmbra(peak.AddDays(minutes / 1440));
+  for (const sign of [-1, 1]) {
+    let inside = 0, outside = 180, edge = center;
+    // 二分定位中心线与地球相切的位置，避免错过两端极短的环食阶段。
+    while (outside - inside > 1e-6) {
+      const mid = (inside + outside) / 2;
+      const radius = umbra(sign * mid);
+      if (radius === null) outside = mid;
+      else { inside = mid; edge = radius; }
+    }
+    if ((edge > 0) !== (center > 0)) return '混合食';
+    for (let minute = 1; minute < inside; minute++) {
+      if ((umbra(sign * minute) > 0) !== (center > 0)) return '混合食';
+    }
+  }
+  return fallback;
+}
+
+export function upcomingEvents(ms, end, limit = 12) {
+  if (!Number.isFinite(ms) || ms > end || limit <= 0) return [];
+  const start = new Date(ms);
+  const eclipse = (find, next, type, body) => function* () {
+    for (let e = find(start); ; e = next(e.peak)) yield { ms: e.peak.date.getTime(), type, body, eclipse: e };
+  }();
+  const sources = [
+    eclipse(A.SearchGlobalSolarEclipse, A.NextGlobalSolarEclipse, 'solar', 'earth'),
+    eclipse(A.SearchLunarEclipse, A.NextLunarEclipse, 'lunar', 'moon'),
+    (function* () {
+      for (let y = start.getUTCFullYear(); ; y++) {
+        const s = A.Seasons(y);
+        for (const [key, name, detail] of SEASONS) yield { ms: s[key].date.getTime(), body: 'earth', name, detail };
+      }
+    })(),
+  ];
+  for (const id of ['mercury', 'venus']) sources.push((function* () {
+    for (let t = start; ;) {
+      const e = A.SearchMaxElongation(BODY[id], t), evening = e.visibility === 'evening';
+      yield { ms: e.time.date.getTime(), body: 'earth', planet: id, name: evening ? '东大距' : '西大距',
+        detail: `与太阳相距 ${e.elongation.toFixed(1)}° · ${evening ? '日落后' : '日出前'}可见` };
+      t = e.time.AddDays(1);
+    }
+  })());
+  for (const id of ['mars', 'jupiter', 'saturn', 'uranus', 'neptune']) sources.push((function* () {
+    for (let t = start; ;) {
+      const e = A.SearchRelativeLongitude(BODY[id], 0, t);
+      yield { ms: e.date.getTime(), body: id, planet: id, name: '冲日', detail: '与太阳分别位于地球天空的两侧' };
+      t = e.AddDays(1);
+    }
+  })());
+  const heads = sources.map((source) => {
+    let event = source.next().value;
+    while (event.ms < ms) event = source.next().value;
+    return event;
+  });
+  const events = [];
+  while (events.length < limit) {
+    const i = heads.reduce((best, e, j) => e.ms < heads[best].ms ? j : best, 0);
+    const { eclipse: e, ...event } = heads[i];
+    if (event.ms > end) break;
+    if (event.type === 'solar') {
+      const coord = (value, pos, neg) => `${value < 0 ? neg : pos}${Math.abs(value).toFixed(1)}°`;
+      event.name = solarKind(e);
+      event.detail = Number.isFinite(e.latitude) ? `食甚中心：${coord(e.latitude, '北纬', '南纬')} · ${coord(e.longitude, '东经', '西经')}` : '可见范围内，月球遮住部分太阳';
+    } else if (event.type === 'lunar') {
+      event.name = { total: '月全食', partial: '月偏食', penumbral: '半影月食' }[e.kind];
+      const [phase, duration] = e.sd_total ? ['全食', e.sd_total] : e.sd_partial ? ['偏食', e.sd_partial] : ['半影阶段', e.sd_penum];
+      event.detail = `${phase}持续约 ${Math.round(2 * duration)} 分钟`;
+    }
+    events.push(event);
+    heads[i] = sources[i].next().value;
+  }
+  return events;
 }

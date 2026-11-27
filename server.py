@@ -4,13 +4,14 @@ import http.server, os, sys, threading, time, urllib.request
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
 LIVE = {
-    '/live/sun.jpg': ('https://sdo.gsfc.nasa.gov/assets/img/latest/latest_1024_HMIIC.jpg', 900),
+    '/live/sun.jpg': ('https://sdo.gsfc.nasa.gov/assets/img/latest/latest_1024_HMIIC.jpg', 900, 'image/jpeg'),
+    '/live/iss.txt': ('https://celestrak.org/NORAD/elements/gp.php?CATNR=25544&FORMAT=TLE', 3600, 'text/plain; charset=utf-8'),
 }
 cache, lock = {}, threading.Lock()
 
 
 def fetch(path):
-    url, ttl = LIVE[path]
+    url, ttl, _ = LIVE[path]
     with lock:
         hit = cache.get(path)
         if hit and time.time() - hit[0] < ttl:
@@ -38,10 +39,12 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             try:
                 _, body, lm = fetch(p)
             except Exception as e:  # noqa: BLE001
+                if os.path.isfile(os.path.join(ROOT, p.lstrip('/'))):
+                    return super().do_GET()
                 self.send_error(502, str(e))
                 return
             self.send_response(200)
-            self.send_header('Content-Type', 'image/jpeg')
+            self.send_header('Content-Type', LIVE[p][2])
             self.send_header('Content-Length', str(len(body)))
             self.send_header('X-Source-Last-Modified', lm)
             self.send_header('Cache-Control', 'max-age=300')

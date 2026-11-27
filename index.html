@@ -19,10 +19,13 @@
 <div id="hud" class="panel">
   <button type="button" id="clock" title="跳转日期和时间" aria-haspopup="dialog">--</button>
   <div id="sync"></div>
-  <div class="row"><span class="k">参考系</span><span id="hudRef">-</span></div>
-  <div class="row"><span class="k">距表面</span><span id="hudAlt">-</span></div>
-  <div class="row"><span class="k">速度</span><span id="hudSpeed">-</span></div>
-  <div class="row"><span class="k">距太阳</span><span id="hudSun">-</span></div>
+  <button id="skyLocation" class="btn hidden" aria-controls="skyPanel" aria-expanded="false"></button>
+  <div id="spaceHud">
+    <div class="row"><span class="k">参考系</span><span id="hudRef">-</span></div>
+    <div class="row"><span class="k">距表面</span><span id="hudAlt">-</span></div>
+    <div class="row"><span class="k">速度</span><span id="hudSpeed">-</span></div>
+    <div class="row"><span class="k">距太阳</span><span id="hudSun">-</span></div>
+  </div>
 </div>
 
 <div id="info" class="panel">
@@ -32,6 +35,8 @@
 
 <div id="topbar">
   <button id="btnBodies" class="btn">天体</button>
+  <button id="btnEvents" class="btn" aria-controls="eventsPanel" aria-expanded="false">天象</button>
+  <button id="btnSky" class="btn" aria-pressed="false">星空</button>
   <button id="btnSettings" class="btn">显示</button>
   <button id="btnShare" class="btn">分享</button>
   <button id="btnHelp" class="btn">?</button>
@@ -39,6 +44,13 @@
 <div id="shareToast" class="panel" role="status"></div>
 
 <div id="bodiesPanel" class="panel drop hidden"></div>
+<div id="eventsPanel" class="panel drop hidden" aria-label="天象日历"></div>
+<div id="skyPanel" class="panel drop hidden" aria-label="观测地点">
+  <div id="skyCoordinates" class="muted"></div>
+  <div id="skyStatus" class="muted" role="status"></div>
+  <button id="skyRetry" class="btn">重新定位</button>
+  <div id="skyCities"></div>
+</div>
 <div id="settingsPanel" class="panel drop hidden">
   <label><input type="checkbox" id="optOrbits" checked /> 轨道线</label>
   <label><input type="checkbox" id="optLabels" checked /> 天体标签</label>
