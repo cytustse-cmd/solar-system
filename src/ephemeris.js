@@ -72,10 +72,22 @@ export function skyPosition(id, t, observer) {
   return { alt: hor.altitude, az: hor.azimuth, distance: eq.dist * AU };
 }
 
-export function skyRiseSet(id, ms, observer) {
+export function skyRiseSet(id, start, end, observer) {
   if (!Object.hasOwn(BODY, id) || id === 'earth' || id === 'emb') return null;
-  const start = new Date(ms);
-  return [1, -1].map((direction) => A.SearchRiseSet(BODY[id], observer, direction, start, 366, observer.height)?.date.getTime() ?? null);
+  const limit = end + 366 * 86400000;
+  const crossings = [1, -1].map((direction) => {
+    const times = [];
+    for (let ms = start;;) {
+      const peak = A.SearchRiseSet(BODY[id], observer, direction, new Date(ms), (limit - ms) / 86400000, observer.height);
+      if (!peak) break;
+      const next = peak.date.getTime();
+      times.push(next);
+      if (next >= end) break;
+      ms = next + 1000;
+    }
+    return times;
+  });
+  return (ms) => crossings.map((times) => times.find((t) => t >= ms && t <= ms + 366 * 86400000) ?? null);
 }
 
 export function state(ms) {

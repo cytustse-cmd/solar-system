@@ -1178,6 +1178,7 @@ const fmtSpeed = (v) => {
 };
 const lightTime = (km) => { const s = km / C_KMS; return s < 120 ? `${s.toFixed(1)} 光秒` : s < 7200 ? `${(s / 60).toFixed(1)} 光分` : `${(s / 3600).toFixed(2)} 光时`; };
 const dtf = new Intl.DateTimeFormat('zh-CN', { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
+const RISE_SET_WINDOW = 7 * 86400000;
 function updateSkyInfo() {
   const b = selected, info = $('infoBody');
   if (b === B.earth) { info.textContent = '地球是你的观测位置。'; return; }
@@ -1185,15 +1186,16 @@ function updateSkyInfo() {
   const apparent = skyState.apparent[b.id];
   const { alt, az } = apparent ?? horizontalAngles(b.rel);
   const ms = time.ms;
+  const start = Math.floor(ms / RISE_SET_WINDOW) * RISE_SET_WINDOW;
   let events = skyState.riseSet;
-  if (!events || events.body !== b || ms < events.start || ms >= events.end) {
-    const times = apparent ? EPH.skyRiseSet(b.id, ms, skyState.observer) : null;
-    const end = Math.min(ms + 86400000, ...(times || []).filter((t) => t !== null));
-    events = skyState.riseSet = { body: b, start: ms, end, times };
+  if (!events || events.body !== b || events.start !== start) {
+    const find = apparent ? EPH.skyRiseSet(b.id, start, start + RISE_SET_WINDOW, skyState.observer) : null;
+    events = skyState.riseSet = { body: b, start, find };
   }
+  const times = events.find?.(ms);
   const format = (t) => t === null ? '一年内无事件' : dtf.format(t);
   info.innerHTML = `高度 ${alt.toFixed(2)}° · 方位 ${az.toFixed(2)}°` +
-    (events.times ? `<br>升起 ${format(events.times[0])}<br>落下 ${format(events.times[1])}<br>时间为设备本地时间` : '<br>暂无升落星历');
+    (times ? `<br>升起 ${format(times[0])}<br>落下 ${format(times[1])}<br>时间为设备本地时间` : '<br>暂无升落星历');
 }
 
 const ISS_UNAVAILABLE = '位置不可用：缺少有效的空间站轨道数据，或与模拟时间相差超过 14 天。';
