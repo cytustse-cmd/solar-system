@@ -60,8 +60,8 @@
 
 <dialog id="dateDialog" class="panel" aria-labelledby="dateLabel">
   <form method="dialog">
-    <label id="dateLabel" for="dateInput">跳转到指定时间（本地时间）</label>
-    <input id="dateInput" type="datetime-local" step="1" />
+    <label id="dateLabel" for="dateInput">跳转到指定时间（本地时间，1800–2100 年）</label>
+    <input id="dateInput" type="datetime-local" step="1" min="1800-01-01T00:00:00" max="2100-12-31T23:59:59" />
     <button class="btn accent">完成</button>
   </form>
 </dialog>

@@ -806,10 +806,15 @@ $('tPause').addEventListener('click', () => { time.paused = !time.paused; });
 $('tNow').addEventListener('click', () => { time.ms = Date.now(); time.rateIdx = 7; time.paused = false; });
 
 const dateDialog = $('dateDialog'), dateInput = $('dateInput');
-function openDate() {
-  const d = new Date(time.ms);
+const minTime = Date.parse(dateInput.min), maxTime = Date.parse(dateInput.max);
+const clampTime = (ms) => Math.min(maxTime, Math.max(minTime, ms));
+function dateInputValue(ms) {
+  const d = new Date(ms);
   const pad = (n) => String(n).padStart(2, '0');
-  dateInput.value = `${String(d.getFullYear()).padStart(4, '0')}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+}
+function openDate() {
+  dateInput.value = dateInputValue(time.ms);
   nav.keys.clear();
   dateDialog.showModal();
 }
@@ -817,14 +822,16 @@ $('clock').addEventListener('click', openDate);
 $('tDate').addEventListener('click', openDate);
 dateInput.addEventListener('change', () => {
   const ms = new Date(dateInput.value).getTime();
-  if (Number.isFinite(ms)) time.ms = ms;
+  if (!Number.isFinite(ms)) return;
+  time.ms = clampTime(ms);
+  if (time.ms !== ms) dateInput.value = dateInputValue(time.ms);
 });
 
 function orbitFromHash() {
   const params = new URLSearchParams(location.hash.slice(1));
   const ms = Date.parse(params.get('t'));
   const rate = params.get('r');
-  time.ms = Number.isFinite(ms) ? ms : Date.now();
+  time.ms = Number.isFinite(ms) ? clampTime(ms) : Date.now();
   time.rateIdx = /^\d+$/.test(rate) && Number(rate) < RATES.length ? Number(rate) : 7;
   time.paused = params.get('p') === '1';
   const id = params.get('b');
@@ -900,7 +907,6 @@ const dtf = new Intl.DateTimeFormat('zh-CN', { year: 'numeric', month: '2-digit'
 let hudT = 0, hashT = -Infinity;
 function updateHud(now) {
   if (now - hudT < 120) return; hudT = now;
-  const inYear = new Date(time.ms).getFullYear();
   $('clock').textContent = dtf.format(time.ms);
   const rate = RATES[time.rateIdx];
   const live = isLive();
@@ -913,7 +919,7 @@ function updateHud(now) {
   $('sync').classList.toggle('off', !live);
   $('tRate').textContent = time.paused ? '暂停' : rateName(rate);
   $('tPause').textContent = time.paused ? '▶' : '⏸';
-  if (inYear < 1800 || inYear > 2100) $('sync').textContent += '（超出星历精度范围）';
+  if (time.ms === minTime || time.ms === maxTime) $('sync').textContent += '（已到星历精度范围边界）';
   const { body, alt } = nearest();
   $('hudRef').textContent = nav.ref.name;
   $('hudAlt').textContent = `${fmtDist(Math.max(0, alt))}（${body.name}）`;
@@ -986,8 +992,8 @@ function frame(now) {
   const dt = Math.min(0.1, (now - last) / 1000); last = now;
   if (!time.paused) {
     const ms = time.ms + dt * 1000 * RATES[time.rateIdx];
-    if (Math.abs(ms) <= 8.64e15) time.ms = ms;
-    else time.paused = true;
+    time.ms = clampTime(ms);
+    if (time.ms !== ms) time.paused = true;
   }
   if (isLive()) time.ms = Date.now();
   const d = EPH.daysSinceJ2000(time.ms);
