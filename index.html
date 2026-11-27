@@ -32,6 +32,7 @@
 
 <div id="topbar">
   <button id="btnBodies" class="btn">天体</button>
+  <button id="btnEvents" class="btn" aria-controls="eventsPanel" aria-expanded="false">天象</button>
   <button id="btnSettings" class="btn">显示</button>
   <button id="btnShare" class="btn">分享</button>
   <button id="btnHelp" class="btn">?</button>
@@ -39,6 +40,7 @@
 <div id="shareToast" class="panel" role="status"></div>
 
 <div id="bodiesPanel" class="panel drop hidden"></div>
+<div id="eventsPanel" class="panel drop hidden" aria-label="天象日历"></div>
 <div id="settingsPanel" class="panel drop hidden">
   <label><input type="checkbox" id="optOrbits" checked /> 轨道线</label>
   <label><input type="checkbox" id="optLabels" checked /> 天体标签</label>

@@ -39,6 +39,7 @@ export const GAL = ['io', 'europa', 'ganymede', 'callisto'];
 
 // 日心黄道 J2000 坐标（km）
 export function helio(id, t) { return vecKm(A.HelioVector(BODY[id], t)); }
+export function eclipseSun(t) { return vecKm(A.GeoVector(A.Body.Sun, t, true)); }
 export function moonGeo(t) { return vecKm(A.GeoMoon(t)); }
 export function galilean(t) {
   const m = A.JupiterMoons(t);
@@ -78,4 +79,86 @@ export function track(id, ms, n) {
     out.set(v, k * 3);
   }
   return out;
+}
+
+const SEASONS = [
+  ['mar_equinox', '春分', '太阳由南向北越过天赤道'],
+  ['jun_solstice', '夏至', '太阳直射位置最偏北'],
+  ['sep_equinox', '秋分', '太阳由北向南越过天赤道'],
+  ['dec_solstice', '冬至', '太阳直射位置最偏南'],
+];
+
+function solarKind({ kind, peak }) {
+  if (kind === 'partial') return '日偏食';
+  let total = false, annular = false;
+  for (let minutes = -180; minutes <= 180; minutes += 2) {
+    const t = peak.AddDays(minutes / 1440);
+    const m = A.GeoMoon(t), s = A.GeoVector(A.Body.Sun, t, true);
+    const x = m.x - s.x, y = m.y - s.y, z = m.z - s.z;
+    const dist = Math.hypot(x, y, z);
+    const along = -(m.x * x + m.y * y + m.z * z) / dist;
+    const miss = Math.hypot(m.x + along * x / dist, m.y + along * y / dist, m.z + along * z / dist) * AU;
+    if (miss >= 6371) continue;
+    const surface = along * AU - Math.sqrt(6371 ** 2 - miss ** 2);
+    const umbra = 1736 - (695700 - 1736) * surface / (dist * AU);
+    if (umbra > 0) total = true; else annular = true;
+    if (total && annular) return '日全环食';
+  }
+  return kind === 'total' ? '日全食' : '日环食';
+}
+
+export function upcomingEvents(ms, end, limit = 12) {
+  if (!Number.isFinite(ms) || ms > end || limit <= 0) return [];
+  const start = new Date(ms);
+  const eclipse = (find, next, type, body) => function* () {
+    for (let e = find(start); ; e = next(e.peak)) yield { ms: e.peak.date.getTime(), type, body, eclipse: e };
+  }();
+  const sources = [
+    eclipse(A.SearchGlobalSolarEclipse, A.NextGlobalSolarEclipse, 'solar', 'earth'),
+    eclipse(A.SearchLunarEclipse, A.NextLunarEclipse, 'lunar', 'moon'),
+    (function* () {
+      for (let y = start.getUTCFullYear(); ; y++) {
+        const s = A.Seasons(y);
+        for (const [key, name, detail] of SEASONS) yield { ms: s[key].date.getTime(), body: 'earth', name, detail };
+      }
+    })(),
+  ];
+  for (const id of ['mercury', 'venus']) sources.push((function* () {
+    for (let t = start; ;) {
+      const e = A.SearchMaxElongation(BODY[id], t), evening = e.visibility === 'evening';
+      yield { ms: e.time.date.getTime(), body: 'earth', planet: id, name: evening ? '东大距' : '西大距',
+        detail: `与太阳相距 ${e.elongation.toFixed(1)}° · ${evening ? '日落后' : '日出前'}可见` };
+      t = e.time.AddDays(1);
+    }
+  })());
+  for (const id of ['mars', 'jupiter', 'saturn', 'uranus', 'neptune']) sources.push((function* () {
+    for (let t = start; ;) {
+      const e = A.SearchRelativeLongitude(BODY[id], 0, t);
+      yield { ms: e.date.getTime(), body: id, planet: id, name: '冲日', detail: '与太阳分别位于地球天空的两侧' };
+      t = e.AddDays(1);
+    }
+  })());
+  const heads = sources.map((source) => {
+    let event = source.next().value;
+    while (event.ms < ms) event = source.next().value;
+    return event;
+  });
+  const events = [];
+  while (events.length < limit) {
+    const i = heads.reduce((best, e, j) => e.ms < heads[best].ms ? j : best, 0);
+    const { eclipse: e, ...event } = heads[i];
+    if (event.ms > end) break;
+    if (event.type === 'solar') {
+      const coord = (value, pos, neg) => `${value < 0 ? neg : pos}${Math.abs(value).toFixed(1)}°`;
+      event.name = solarKind(e);
+      event.detail = Number.isFinite(e.latitude) ? `食甚中心：${coord(e.latitude, '北纬', '南纬')} · ${coord(e.longitude, '东经', '西经')}` : '可见范围内，月球遮住部分太阳';
+    } else if (event.type === 'lunar') {
+      event.name = { total: '月全食', partial: '月偏食', penumbral: '半影月食' }[e.kind];
+      const [phase, duration] = e.sd_total ? ['全食', e.sd_total] : e.sd_partial ? ['偏食', e.sd_partial] : ['半影阶段', e.sd_penum];
+      event.detail = `${phase}持续约 ${Math.round(2 * duration)} 分钟`;
+    }
+    events.push(event);
+    heads[i] = sources[i].next().value;
+  }
+  return events;
 }

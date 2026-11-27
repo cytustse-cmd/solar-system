@@ -80,13 +80,42 @@ const B = Object.fromEntries(BODIES.map((b) => [b.id, b]));
 for (const b of BODIES) { b.pos = new THREE.Vector3(); b.rel = new THREE.Vector3(); b.basis = new THREE.Matrix4(); b.tilt = new THREE.Matrix4(); }
 
 // ---------- 着色器公共片段 ----------
+const eclipseUniforms = (occluder) => ({
+  eclipseSun: { value: new THREE.Vector3() }, eclipseOccluder: { value: new THREE.Vector3() },
+  eclipseSunRadius: { value: B.sun.R }, eclipseOccluderRadius: { value: occluder.R },
+});
+const earthEclipse = eclipseUniforms(B.moon), moonEclipse = eclipseUniforms(B.earth);
+const ECLIPSE = /* glsl */`
+uniform vec3 eclipseSun, eclipseOccluder;
+uniform float eclipseSunRadius, eclipseOccluderRadius;
+varying vec3 eclipsePoint;
+float sunlight() {
+  vec3 sun = eclipseSun - eclipsePoint;
+  vec3 body = eclipseOccluder - eclipsePoint;
+  float ds = length(sun), db = length(body);
+  if (db >= ds || dot(sun, body) <= 0.0) return 1.0;
+  sun /= ds;
+  body /= db;
+  float s = asin(clamp(eclipseSunRadius / ds, 0.0, 1.0));
+  float r = asin(clamp(eclipseOccluderRadius / db, 0.0, 1.0));
+  float d = atan(length(cross(sun, body)), dot(sun, body));
+  if (d >= s + r) return 1.0;
+  if (d <= abs(s - r)) return r >= s ? 0.0 : 1.0 - (r / s) * (r / s);
+  float ss = s * s, rr = r * r, dd = d * d;
+  float a = acos(clamp((dd + ss - rr) / (2.0 * d * s), -1.0, 1.0));
+  float b = acos(clamp((dd + rr - ss) / (2.0 * d * r), -1.0, 1.0));
+  float chord = sqrt(max(0.0, (-d + s + r) * (d + s - r) * (d - s + r) * (d + s + r)));
+  return clamp(1.0 - (ss * a + rr * b - chord * 0.5) / (PI * ss), 0.0, 1.0);
+}`;
 const VS_WORLD = /* glsl */`
 #include <common>
 #include <logdepthbuf_pars_vertex>
 varying vec2 vUv; varying vec3 vN; varying vec3 vW;
+varying vec3 eclipsePoint;
 void main() {
   vUv = uv;
   vN = normalize(mat3(modelMatrix) * normal);
+  eclipsePoint = mat3(modelMatrix) * position;
   vec4 w = modelMatrix * vec4(position, 1.0);
   vW = w.xyz;
   gl_Position = projectionMatrix * viewMatrix * w;
@@ -185,7 +214,7 @@ function loadLiveClouds() {
 function makeEarth(b) {
   const staticClouds = tex('earth_clouds_4k.jpg', false);
   const mat = new THREE.ShaderMaterial({
-    uniforms: { dayMap: { value: null }, nightMap: { value: tex('earth_night_4k.jpg') },
+    uniforms: { ...earthEclipse, dayMap: { value: null }, nightMap: { value: tex('earth_night_4k.jpg') },
       specMap: { value: tex('earth_spec_4k.jpg', false) }, normalMap: { value: tex('earth_normal_4k.jpg', false) },
       cloudMap: { value: staticClouds }, alphaChan: { value: 0 },
       sunDir: { value: new THREE.Vector3(1, 0, 0) }, pole: { value: new THREE.Vector3(0, 1, 0) } },
@@ -196,6 +225,7 @@ function makeEarth(b) {
 uniform sampler2D dayMap; uniform sampler2D nightMap; uniform sampler2D specMap; uniform sampler2D normalMap;
 uniform sampler2D cloudMap; uniform float alphaChan; uniform vec3 sunDir; uniform vec3 pole;
 varying vec2 vUv; varying vec3 vN; varying vec3 vW;
+${ECLIPSE}
 void main() {
   #include <logdepthbuf_fragment>
   vec3 n0 = normalize(vN);
@@ -213,11 +243,12 @@ void main() {
   float cloud = pow(mix(cs.r, cs.a, alphaChan), 1.5) * 0.85;
   float lit = clamp(mix(ndl0, ndl, smoothstep(0.0, 0.15, ndl0)), 0.0, 1.0);
   float dayMix = smoothstep(-0.08, 0.08, ndl0);
-  vec3 col = day * (lit * 1.1 + 0.008) * (1.0 - 0.35 * cloud * smoothstep(0.0, 0.2, ndl0));
+  float light = sunlight();
+  vec3 col = day * (lit * light * 1.1 + 0.008) * (1.0 - 0.35 * cloud * smoothstep(0.0, 0.2, ndl0));
   col += night * vec3(1.0, 0.8, 0.55) * (1.0 - dayMix) * 1.5 * (1.0 - 0.8 * cloud);
   vec3 hv = normalize(sunDir + v);
   float fres = 0.02 + 0.98 * pow(1.0 - max(dot(n0, v), 0.0), 5.0);
-  col += vec3(1.0, 0.94, 0.85) * water * (1.0 - cloud) * (pow(max(dot(n0, hv), 0.0), 60.0) * 0.6 + fres * 0.08) * clamp(ndl0, 0.0, 1.0);
+  col += vec3(1.0, 0.94, 0.85) * water * (1.0 - cloud) * (pow(max(dot(n0, hv), 0.0), 60.0) * 0.6 + fres * 0.08) * clamp(ndl0, 0.0, 1.0) * light;
   col += vec3(1.0, 0.42, 0.15) * 0.012 * exp(-ndl0 * ndl0 * 120.0);
   gl_FragColor = vec4(col, 1.0);
   #include <colorspace_fragment>
@@ -226,20 +257,21 @@ void main() {
   b.mat = mat;
   const mesh = new THREE.Mesh(sphereGeo, mat);
   const clouds = new THREE.Mesh(sphereGeo, new THREE.ShaderMaterial({
-    uniforms: { cloudMap: { value: staticClouds }, alphaChan: { value: 0 }, sunDir: mat.uniforms.sunDir },
+    uniforms: { ...earthEclipse, cloudMap: { value: staticClouds }, alphaChan: { value: 0 }, sunDir: mat.uniforms.sunDir },
     vertexShader: VS_WORLD,
     fragmentShader: /* glsl */`
 #include <common>
 #include <logdepthbuf_pars_fragment>
 uniform sampler2D cloudMap; uniform float alphaChan; uniform vec3 sunDir;
 varying vec2 vUv; varying vec3 vN; varying vec3 vW;
+${ECLIPSE}
 void main() {
   #include <logdepthbuf_fragment>
   vec4 cs = texture2D(cloudMap, vUv);
   float a = mix(cs.r, cs.a, alphaChan);
   a = pow(a, 1.5) * 0.85;
   float ndl = dot(normalize(vN), sunDir);
-  float lit = smoothstep(-0.1, 0.25, ndl) * (0.25 + 0.75 * clamp(ndl, 0.0, 1.0)) + 0.004;
+  float lit = smoothstep(-0.1, 0.25, ndl) * (0.25 + 0.75 * clamp(ndl, 0.0, 1.0)) * sunlight() + 0.004;
   vec3 c = mix(vec3(1.0, 0.75, 0.6), vec3(1.0), smoothstep(-0.05, 0.12, ndl)) * lit;
   gl_FragColor = vec4(c, a);
   #include <colorspace_fragment>
@@ -358,6 +390,14 @@ function glowTexture() {
   const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; return t;
 }
 
+function moonShadowMaterial(shader) {
+  Object.assign(shader.uniforms, moonEclipse);
+  shader.vertexShader = 'varying vec3 eclipsePoint;\n' + shader.vertexShader.replace('#include <begin_vertex>',
+    '#include <begin_vertex>\neclipsePoint = mat3(modelMatrix) * transformed;');
+  shader.fragmentShader = shader.fragmentShader.replace('#include <common>', '#include <common>\n' + ECLIPSE)
+    .replace('#include <opaque_fragment>', 'outgoingLight *= mix(vec3(0.075, 0.014, 0.006), vec3(1.0), sunlight());\n#include <opaque_fragment>');
+}
+
 for (const b of BODIES) {
   b.obj = new THREE.Group();
   scene.add(b.obj);
@@ -372,6 +412,7 @@ for (const b of BODIES) {
   } else {
     const map = b.tex ? tex(b.tex) : noiseTexture(b.noise);
     mesh = new THREE.Mesh(sphereGeo, new THREE.MeshPhongMaterial({ map, shininess: 4, specular: 0x0a0a0a }));
+    if (b.id === 'moon') mesh.material.onBeforeCompile = moonShadowMaterial;
   }
   mesh.matrixAutoUpdate = false;
   b.mesh = mesh;
@@ -597,7 +638,10 @@ function updateEphemeris() {
     setBasis(B[id], { X, Y, Z: jZ });
   });
   for (const b of BODIES) toScene(P[b.id], b.pos);
-  return P;
+  toScene(EPH.eclipseSun(t), earthEclipse.eclipseSun.value);
+  earthEclipse.eclipseOccluder.value.copy(B.moon.pos).sub(B.earth.pos);
+  moonEclipse.eclipseSun.value.copy(earthEclipse.eclipseSun.value).sub(earthEclipse.eclipseOccluder.value);
+  moonEclipse.eclipseOccluder.value.copy(earthEclipse.eclipseOccluder.value).negate();
 }
 
 // ---------- 时间 ----------
@@ -624,11 +668,21 @@ function viewDir(b) {
   const perp = new THREE.Vector3().crossVectors(s, UP).normalize();
   return s.multiplyScalar(0.55).add(perp.multiplyScalar(0.8)).add(UP.clone().multiplyScalar(0.22)).normalize();
 }
-function flyTo(b, keepDist = false) {
+function eclipseView(type) {
+  const moon = earthEclipse.eclipseOccluder.value;
+  if (type === 'lunar') return moon.clone().negate().normalize();
+  if (type !== 'solar') return null;
+  const sun = earthEclipse.eclipseSun.value;
+  const ray = moon.clone().sub(sun).normalize();
+  const closest = moon.clone().addScaledVector(ray, -moon.dot(ray));
+  const depth = Math.sqrt(Math.max(0, B.earth.R ** 2 - closest.lengthSq()));
+  return closest.addScaledVector(ray, -depth).normalize().addScaledVector(sun, 0.3 / sun.length()).normalize();
+}
+function flyTo(b, keepDist = false, direction = null) {
   const p0 = camWorld.clone().sub(b.pos);
   if (p0.length() < 1) p0.set(0, 0, 1);
   const u0 = p0.clone().normalize();
-  const dirE = keepDist ? u0.clone() : (viewDir(b) || u0.clone());
+  const dirE = keepDist ? u0.clone() : (direction || viewDir(b) || u0.clone());
   const distE = keepDist ? Math.max(p0.length(), b.R * 1.1) : b.R * b.view;
   const ratio = Math.abs(Math.log10(p0.length() / distE));
   nav.fly = { target: b, u0, l0: Math.log(p0.length()), le: Math.log(distE), qd: new THREE.Quaternion().setFromUnitVectors(u0, dirE),
@@ -772,9 +826,19 @@ function orbitNearest() {
 }
 modeBtn.addEventListener('click', () => { if (nav.mode === 'free') orbitNearest(); else { nav.mode = 'free'; nav.fly = null; updateModeBtn(); } });
 
-const panels = { btnBodies: $('bodiesPanel'), btnSettings: $('settingsPanel') };
-function closeDrops() { for (const p of Object.values(panels)) p.classList.add('hidden'); }
-for (const [bid, p] of Object.entries(panels)) $(bid).addEventListener('click', () => { const h = p.classList.contains('hidden'); closeDrops(); if (h) p.classList.remove('hidden'); });
+const eventsPanel = $('eventsPanel'), eventsButton = $('btnEvents');
+const panels = { btnBodies: $('bodiesPanel'), btnSettings: $('settingsPanel'), btnEvents: eventsPanel };
+function closeDrops() {
+  for (const p of Object.values(panels)) p.classList.add('hidden');
+  eventsButton.setAttribute('aria-expanded', 'false');
+}
+for (const [bid, p] of Object.entries(panels)) $(bid).addEventListener('click', () => {
+  const hidden = p.classList.contains('hidden');
+  closeDrops();
+  if (!hidden) return;
+  if (p === eventsPanel) { renderEvents(); eventsButton.setAttribute('aria-expanded', 'true'); }
+  p.classList.remove('hidden');
+});
 $('btnHelp').addEventListener('click', () => $('help').classList.toggle('hidden'));
 $('helpClose').addEventListener('click', () => { $('help').classList.add('hidden'); localStorage.setItem('ss-help-seen', '1'); });
 
@@ -903,6 +967,30 @@ const fmtSpeed = (v) => {
 };
 const lightTime = (km) => { const s = km / C_KMS; return s < 120 ? `${s.toFixed(1)} 光秒` : s < 7200 ? `${(s / 60).toFixed(1)} 光分` : `${(s / 3600).toFixed(2)} 光时`; };
 const dtf = new Intl.DateTimeFormat('zh-CN', { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
+
+function renderEvents() {
+  eventsPanel.innerHTML = '<h3>天象日历</h3><p class="muted">从当前模拟时间起 · 本地时间</p>';
+  let events;
+  try { events = EPH.upcomingEvents(time.ms, maxTime); }
+  catch { eventsPanel.lastElementChild.textContent = '暂时无法计算天象，请尝试调整模拟时间。'; return; }
+  if (!events.length) { eventsPanel.lastElementChild.textContent = '星历精度范围内没有更多天象。'; return; }
+  for (const e of events) {
+    const button = document.createElement('button');
+    const when = document.createElement('time');
+    const detail = document.createElement('small');
+    button.type = 'button'; button.className = 'btn';
+    when.dateTime = new Date(e.ms).toISOString(); when.textContent = dtf.format(e.ms);
+    detail.className = 'muted'; detail.textContent = e.detail;
+    button.append(when, (e.planet ? B[e.planet].name : '') + e.name, detail);
+    button.addEventListener('click', () => {
+      time.ms = e.ms; time.paused = true;
+      updateEphemeris();
+      flyTo(B[e.body], false, eclipseView(e.type));
+      closeDrops();
+    });
+    eventsPanel.appendChild(button);
+  }
+}
 
 let hudT = 0, hashT = -Infinity;
 function updateHud(now) {
