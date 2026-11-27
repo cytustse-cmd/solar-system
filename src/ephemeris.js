@@ -180,6 +180,36 @@ export function orient(id, t) {
   return [ax.ra * 15, ax.dec, ax.spin];
 }
 
+// System II west longitudes, unwrapped across 360°. Approximate GRS centers from the
+// ALPO-Japan drift chart: https://alpo-j.sakura.ne.jp/Latest/j_Cylindrical_Maps/j20-26GRS_drift_chart.htm
+// 2025-09-01: https://britastro.org/wp-content/uploads/2025/10/Report_2025-26_no-2_Minifigs.pdf
+// Oct/Nov 2026 centers from ALPO-Japan System II maps:
+// https://alpo-j.sakura.ne.jp/Latest/j_Cylindrical_Maps/j26mapsL2.htm
+const JUPITER_GRS_ANCHORS = [
+  [2020, 2, 1, 325], [2021, 8, 14, 360], [2022, 8, 14, 381.4],
+  [2023, 8, 14, 399.2], [2024, 9, 10, 420.4], [2025, 2, 20, 429.6],
+  [2025, 9, 1, 437], [2025, 11, 24, 438.6], [2026, 2, 17, 442.6],
+  [2026, 6, 5, 449.6], [2026, 10, 19, 455.5], [2026, 11, 18, 455.5],
+].map(([year, month, day, lon]) => [Date.UTC(year, month - 1, day), lon]);
+
+function jupiterGrsLongitudeII(ms) {
+  let [start, lon] = JUPITER_GRS_ANCHORS[0];
+  if (ms <= start) return lon;
+  for (let i = 1; i < JUPITER_GRS_ANCHORS.length; i++) {
+    const [end, nextLon] = JUPITER_GRS_ANCHORS[i];
+    if (ms <= end) return lon + (nextLon - lon) * (ms - start) / (end - start);
+    start = end; lon = nextLon;
+  }
+  return lon;
+}
+
+export function jupiterGrsLongitudeIII(t, frameSpin = orient('jupiter', t)[2]) {
+  // IAU J2000: W₂ = 43.3° + 870.270°/d; W₃ = 284.95° + 870.536°/d (orient).
+  // A west longitude increases by W₃ − W₂; frameSpin may be the render frame's W₃.
+  const W2 = 43.3 + 870.27 * t.tt;
+  return wrapDegrees(jupiterGrsLongitudeII(t.date.getTime()) + (frameSpin - W2));
+}
+
 export function earthFixed(t) {
   const angle = A.SiderealTime(t) * 15 * DEG;
   const c = Math.cos(angle), s = Math.sin(angle), rot = A.Rotation_EQD_EQJ(t);
@@ -256,7 +286,7 @@ export function state(ms, apparent = false) {
     cometDistance[id] = Math.hypot(...geometric);
     P[id] = apparent ? fromEarth(cometApparent(id, t)) : geometric;
   }
-  return { t, P, gal: g, cometDistance };
+  return { t, P, gal: g, cometDistance, jupiterTime: emission.jupiter ?? t };
 }
 
 // 以当前时刻为中心采样一个周期的轨迹（日心或母星心，km）

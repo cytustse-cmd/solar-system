@@ -467,6 +467,7 @@ for (const b of BODIES) {
     }
   } else {
     const map = b.tex ? tex(b.tex) : noiseTexture(b.noise);
+    if (b.id === 'jupiter') map.wrapS = THREE.RepeatWrapping;
     mesh = new THREE.Mesh(sphereGeo, new THREE.MeshPhongMaterial({ map, shininess: 4, specular: 0x0a0a0a }));
     if (b.id === 'moon') mesh.material.onBeforeCompile = moonShadowMaterial;
   }
@@ -714,7 +715,7 @@ function setBasis(b, ax, W = true) {
 }
 function updateEphemeris() {
   const apparent = nav.mode === 'sky' || $('optApparent').checked;
-  const { t, P, gal, cometDistance } = EPH.state(time.ms, apparent);
+  const { t, P, gal, cometDistance, jupiterTime } = EPH.state(time.ms, apparent);
   for (const b of BODIES) {
     if (b.id === 'earth' && nav.mode === 'sky') { setBasis(b, EPH.earthFixed(t)); continue; }
     const o = EPH.orient(b.id, t);
@@ -724,6 +725,9 @@ function updateEphemeris() {
     }
   }
   const jo = EPH.orient('jupiter', t);
+  // The GRS is centered at x≈1495 in the 4096 px map. West longitude = 360° × (0.5 − u).
+  const grsWest = EPH.jupiterGrsLongitudeIII(jupiterTime, jo[2]);
+  B.jupiter.mesh.material.map.offset.x = 1495 / 4096 - (0.5 - grsWest / 360);
   const jZ = EPH.axesEcl(jo[0], jo[1], 0).Z;
   GAL.forEach((id, i) => {
     // 潮汐锁定：本初子午线指向木星
