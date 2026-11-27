@@ -289,13 +289,13 @@ void main() {
 const sunState = { at: 0 };
 function makeSun(b) {
   const mat = new THREE.ShaderMaterial({
-    uniforms: { map: { value: tex('sun_4k.jpg') }, sdo: { value: null }, hasSdo: { value: 0 },
+    uniforms: { map: { value: tex('sun_4k.jpg') }, sdo: { value: null }, hasSdo: { value: 0 }, skyView: { value: 0 },
       toEarth: { value: new THREE.Vector3(1, 0, 0) }, pole: { value: new THREE.Vector3(0, 1, 0) } },
     vertexShader: VS_WORLD,
     fragmentShader: /* glsl */`
 #include <common>
 #include <logdepthbuf_pars_fragment>
-uniform sampler2D map; uniform sampler2D sdo; uniform float hasSdo; uniform vec3 toEarth; uniform vec3 pole;
+uniform sampler2D map; uniform sampler2D sdo; uniform float hasSdo; uniform float skyView; uniform vec3 toEarth; uniform vec3 pole;
 varying vec2 vUv; varying vec3 vN; varying vec3 vW;
 void main() {
   #include <logdepthbuf_fragment>
@@ -315,7 +315,9 @@ void main() {
     }
   }
   float ld = 1.0 - 0.62 * (1.0 - muCam) - 0.18 * (1.0 - muCam) * (1.0 - muCam);
-  gl_FragColor = vec4(vec3(1.0, 0.8, 0.55) * I * 0.92 * (0.12 + 0.88 * ld), 1.0);
+  vec3 surface = vec3(1.0, 0.8, 0.55) * I * 0.92 * (0.12 + 0.88 * ld);
+  vec3 glare = vec3(1.0, 0.95, 0.80) * (0.65 + 0.4 * ld + 0.15 * I);
+  gl_FragColor = vec4(mix(surface, glare, skyView), 1.0);
   #include <colorspace_fragment>
 }`,
   });
@@ -1267,7 +1269,6 @@ function updateSkyScene(t, inSky) {
   scene.background = inSky ? skyColor : null;
   milky.material.uniforms.intensity.value = 0.55 * starFade.value;
   constLines.children.forEach((lines) => { lines.material.opacity = 0.45 * starFade.value; });
-  B.sun.glow.material.opacity = inSky ? 0.15 * starFade.value : 1;
 }
 let last = performance.now();
 function frame(now) {
@@ -1303,7 +1304,10 @@ function frame(now) {
   const sunRel = B.sun.rel;
   sunLight.position.copy(sunRel);
   const sd = sunRel.length();
-  B.sun.glow.scale.setScalar(Math.max(B.sun.R * 9, sd * 0.05));
+  const glareSize = 2 * sd * Math.tan(camera.fov * DEG / 2) * 95 / innerHeight;
+  B.sun.mat.uniforms.skyView.value = inSky ? 1 : 0;
+  B.sun.glow.scale.setScalar(inSky ? Math.max(B.sun.R * 8, glareSize) : Math.max(B.sun.R * 9, sd * 0.05));
+  B.sun.glow.material.opacity = inSky ? 0.9 : 1;
   for (const b of BODIES) {
     const sdir = sunRel.clone().sub(b.rel).normalize();
     if (b.mat && b.mat.uniforms.sunDir) b.mat.uniforms.sunDir.value.copy(sdir);
