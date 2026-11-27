@@ -1536,12 +1536,18 @@ function frame(now) {
 
   if (!inSky) updateOrbitGeometry(d);
   if (orbitGroup.visible) updateIssOrbit(t);
-  if (orbitGroup.visible) for (const { b, line, opacity } of TRACKS) {
-    const parent = b.parent && B[b.parent];
-    if (parent) line.position.copy(parent.rel);
-    else line.position.copy(camWorld).negate();
-    line.visible = !b.small || !parent || parent.rel.lengthSq() < b.pos.distanceToSquared(parent.pos) * focal ** 2;
-    if (line.visible) line.material.opacity = opacity * THREE.MathUtils.clamp((b.rel.length() / b.R - 8) / 60, 0, 1);
+  if (orbitGroup.visible) {
+    const geometric = $('optApparent').checked ? EPH.state(time.ms).P : null;
+    for (const { b, line, opacity } of TRACKS) {
+      const parent = b.parent && B[b.parent];
+      if (geometric) {
+        line.position.copy(b.rel).sub(toScene(geometric[b.id], tmpV));
+        if (parent) line.position.add(toScene(geometric[parent.id], tmpV));
+      } else if (parent) line.position.copy(parent.rel);
+      else line.position.copy(camWorld).negate();
+      line.visible = !b.small || !parent || parent.rel.lengthSq() < b.pos.distanceToSquared(parent.pos) * focal ** 2;
+      if (line.visible) line.material.opacity = opacity * THREE.MathUtils.clamp((b.rel.length() / b.R - 8) / 60, 0, 1);
+    }
   }
   belt.position.copy(camWorld).negate();
   belt.material.uniforms.dt.value = d - asteroidEpoch;
