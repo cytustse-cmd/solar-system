@@ -34,8 +34,10 @@ manager.onLoad = () => {
 };
 const tl = new THREE.TextureLoader(manager);
 const maxAniso = renderer.capabilities.getMaxAnisotropy();
+const nativeTextures = new Set(['neptune_2k.jpg', 'uranus_2k.jpg', 'plutomap1k.jpg', 'saturn_ring_4k.png']);
+const texturePath = (file) => 'textures/' + (isTouch && !nativeTextures.has(file) ? '2k/' : '') + file;
 function tex(file, srgb = true) {
-  const t = tl.load('textures/' + file);
+  const t = tl.load(texturePath(file));
   if (srgb) t.colorSpace = THREE.SRGBColorSpace;
   t.anisotropy = Math.min(8, maxAniso);
   return t;
@@ -159,7 +161,7 @@ const earthDay = { month: -1, tex: null };
 function setEarthMonth(m) {
   if (m === earthDay.month) return;
   earthDay.month = m;
-  const t = tl.load(`textures/earth_day_${String(m + 1).padStart(2, '0')}.jpg`, () => {
+  const t = tl.load(texturePath(`earth_day_${String(m + 1).padStart(2, '0')}.jpg`), () => {
     if (earthDay.month !== m) return;
     const old = B.earth.mat.uniforms.dayMap.value;
     B.earth.mat.uniforms.dayMap.value = t;
@@ -392,7 +394,7 @@ const galFromEq = new THREE.Matrix3().set(
   0.4941094279, -0.44482963, 0.7469822445,
   -0.867666149, -0.1980763734, 0.4559837762);
 const galFromScene = galFromEq.clone().multiply(eqFromEcl).multiply(eclFromScene);
-const mwTex = tl.load('textures/milkyway.jpg');
+const mwTex = tl.load(texturePath('milkyway.jpg'));
 mwTex.colorSpace = THREE.SRGBColorSpace; mwTex.generateMipmaps = false; mwTex.minFilter = THREE.LinearFilter;
 const milky = new THREE.Mesh(new THREE.SphereGeometry(SKY_R * 1.5, 64, 32), new THREE.ShaderMaterial({
   uniforms: { map: { value: mwTex }, toGal: { value: galFromScene }, intensity: { value: 0.55 } },
@@ -601,6 +603,7 @@ function updateEphemeris() {
 // ---------- 时间 ----------
 const RATES = [-31557600, -2592000, -604800, -86400, -3600, -60, -1, 1, 60, 3600, 86400, 604800, 2592000, 31557600];
 const time = { ms: Date.now(), rateIdx: 7, paused: false };
+const isLive = () => !time.paused && time.rateIdx === 7 && Math.abs(time.ms - Date.now()) < 3000;
 const rateName = (r) => {
   const a = Math.abs(r);
   const s = a === 1 ? '1 秒/秒' : a === 60 ? '1 分钟/秒' : a === 3600 ? '1 小时/秒' : a === 86400 ? '1 天/秒' : a === 604800 ? '1 周/秒' : a === 2592000 ? '30 天/秒' : '1 年/秒';
@@ -724,7 +727,7 @@ canvas.addEventListener('wheel', (e) => {
 document.addEventListener('gesturestart', (e) => e.preventDefault());
 const ORDER = ['sun', 'mercury', 'venus', 'earth', 'mars', 'jupiter', 'saturn', 'uranus', 'neptune', 'pluto'];
 addEventListener('keydown', (e) => {
-  if (e.target.tagName === 'INPUT') return;
+  if (dateDialog.open || e.target.tagName === 'INPUT' || (e.code === 'Space' && e.target.tagName === 'BUTTON')) return;
   nav.keys.add(e.code);
   if (/^Digit\d$/.test(e.code)) flyTo(B[ORDER[+e.code.slice(5)]]);
   if (e.code === 'KeyO') toggleOpt('optOrbits');
@@ -802,6 +805,77 @@ $('tFaster').addEventListener('click', () => { time.rateIdx = Math.min(RATES.len
 $('tPause').addEventListener('click', () => { time.paused = !time.paused; });
 $('tNow').addEventListener('click', () => { time.ms = Date.now(); time.rateIdx = 7; time.paused = false; });
 
+const dateDialog = $('dateDialog'), dateInput = $('dateInput');
+const minTime = Date.UTC(1800, 0, 1), maxTime = Date.UTC(2101, 0, 1) - 1000;
+const clampTime = (ms) => Math.min(maxTime, Math.max(minTime, ms));
+function dateInputValue(ms) {
+  const d = new Date(ms);
+  const pad = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+}
+function openDate() {
+  dateInput.value = dateInputValue(time.ms);
+  nav.keys.clear();
+  dateDialog.showModal();
+}
+$('clock').addEventListener('click', openDate);
+$('tDate').addEventListener('click', openDate);
+dateInput.addEventListener('change', () => {
+  const ms = new Date(dateInput.value).getTime();
+  if (!Number.isFinite(ms)) return;
+  time.ms = clampTime(ms);
+  if (time.ms !== ms) dateInput.value = dateInputValue(time.ms);
+});
+
+function orbitFromHash() {
+  const params = new URLSearchParams(location.hash.slice(1));
+  const ms = Date.parse(params.get('t'));
+  const rate = params.get('r');
+  time.ms = Number.isFinite(ms) ? clampTime(ms) : Date.now();
+  time.rateIdx = /^\d+$/.test(rate) && Number(rate) < RATES.length ? Number(rate) : 7;
+  time.paused = params.get('p') === '1';
+  const id = params.get('b');
+  const b = Object.hasOwn(B, id) ? B[id] : B.earth;
+  updateEphemeris();
+  updateOrbitGeometry(EPH.daysSinceJ2000(time.ms), true);
+  nav.mode = 'orbit'; nav.ref = b; nav.fly = null;
+  nav.offset.copy(viewDir(b) || new THREE.Vector3(0, 0, 1)).multiplyScalar(b.R * b.view);
+  camWorld.copy(b.pos).add(nav.offset);
+  selectBody(b);
+  updateModeBtn();
+}
+addEventListener('hashchange', orbitFromHash);
+
+function viewHash() {
+  const params = new URLSearchParams({ b: nav.ref.id });
+  if (!isLive()) params.set('t', new Date(time.ms).toISOString());
+  if (time.rateIdx !== 7) params.set('r', time.rateIdx);
+  if (time.paused) params.set('p', '1');
+  return '#' + params;
+}
+
+let toastTimer;
+function shareToast(message) {
+  const toast = $('shareToast');
+  toast.textContent = message;
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => { toast.textContent = ''; }, 2400);
+}
+$('btnShare').addEventListener('click', async () => {
+  const url = new URL(viewHash(), location.href).href;
+  if (navigator.share) {
+    try { await navigator.share({ url }); return; }
+    catch (err) { if (err.name === 'AbortError') return; }
+  }
+  try {
+    await navigator.clipboard.writeText(url);
+    shareToast('链接已复制');
+  } catch {
+    shareToast('无法复制链接，请从地址栏复制');
+    if (location.href !== url) history.replaceState(history.state, '', url);
+  }
+});
+
 // 天体标签
 for (const b of BODIES) {
   const el = document.createElement('div');
@@ -830,18 +904,22 @@ const fmtSpeed = (v) => {
 const lightTime = (km) => { const s = km / C_KMS; return s < 120 ? `${s.toFixed(1)} 光秒` : s < 7200 ? `${(s / 60).toFixed(1)} 光分` : `${(s / 3600).toFixed(2)} 光时`; };
 const dtf = new Intl.DateTimeFormat('zh-CN', { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
 
-let hudT = 0;
+let hudT = 0, hashT = -Infinity;
 function updateHud(now) {
   if (now - hudT < 120) return; hudT = now;
-  const inYear = new Date(time.ms).getFullYear();
   $('clock').textContent = dtf.format(time.ms);
   const rate = RATES[time.rateIdx];
-  const live = !time.paused && rate === 1 && Math.abs(time.ms - Date.now()) < 3000;
+  const live = isLive();
+  if (now - hashT >= 500) {
+    hashT = now;
+    const hash = viewHash();
+    if (location.hash !== hash) history.replaceState(history.state, '', hash);
+  }
   $('sync').textContent = live ? '● 与现实实时同步' : time.paused ? '❚❚ 已暂停' : `▶ ${rateName(rate)}`;
   $('sync').classList.toggle('off', !live);
   $('tRate').textContent = time.paused ? '暂停' : rateName(rate);
   $('tPause').textContent = time.paused ? '▶' : '⏸';
-  if (inYear < 1800 || inYear > 2100) $('sync').textContent += '（超出星历精度范围）';
+  if (time.ms === minTime || time.ms === maxTime) $('sync').textContent += '（已到星历精度范围边界）';
   const { body, alt } = nearest();
   $('hudRef').textContent = nav.ref.name;
   $('hudAlt').textContent = `${fmtDist(Math.max(0, alt))}（${body.name}）`;
@@ -912,8 +990,12 @@ const scaleM = new THREE.Matrix4();
 let last = performance.now();
 function frame(now) {
   const dt = Math.min(0.1, (now - last) / 1000); last = now;
-  if (!time.paused) time.ms += dt * 1000 * RATES[time.rateIdx];
-  if (time.rateIdx === 7 && !time.paused && Math.abs(time.ms - Date.now()) < 3000) time.ms = Date.now();
+  if (!time.paused) {
+    const ms = time.ms + dt * 1000 * RATES[time.rateIdx];
+    time.ms = clampTime(ms);
+    if (time.ms !== ms) time.paused = true;
+  }
+  if (isLive()) time.ms = Date.now();
   const d = EPH.daysSinceJ2000(time.ms);
   updateEphemeris();
   updateNav(dt);
@@ -946,8 +1028,10 @@ function frame(now) {
   B.sun.mat.uniforms.pole.value.setFromMatrixColumn(B.sun.basis, 1).normalize();
   B.sun.mat.uniforms.toEarth.value.copy(B.earth.pos).sub(B.sun.pos).normalize();
   setEarthMonth(new Date(time.ms).getUTCMonth());
-  if (Date.now() - cloudState.at > 1800000) loadLiveClouds();
-  if (Date.now() - sunState.at > 900000) loadSdo();
+  if (navigator.onLine) {
+    if (Date.now() - cloudState.at > 1800000) loadLiveClouds();
+    if (Date.now() - sunState.at > 900000) loadSdo();
+  }
 
   updateOrbitGeometry(d);
   for (const id of ORBIT_IDS) orbitLines[id].position.copy(sunRel);
@@ -972,16 +1056,13 @@ addEventListener('resize', () => {
   renderer.setSize(innerWidth, innerHeight);
 });
 
-// 初始：环绕地球，可见晨昏线
-updateEphemeris();
-updateOrbitGeometry(EPH.daysSinceJ2000(time.ms), true);
-nav.offset.copy(viewDir(B.earth)).multiplyScalar(B.earth.R * 3.6);
-camWorld.copy(B.earth.pos).add(nav.offset);
-selectBody(B.earth);
-updateModeBtn();
+// 初始：环绕链接中的天体或地球
+orbitFromHash();
 setSpeedExp(0);
 applyOpts();
 requestAnimationFrame(frame);
 
 // 调试/自动化用
 window.__ss = { nav, B, time, flyTo };
+
+if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js', { scope: './' }).catch(() => {});
