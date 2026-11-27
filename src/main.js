@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import * as EPH from './ephemeris.js';
+import * as ISS from './iss.js';
 
 const DEG = Math.PI / 180;
 const C_KMS = 299792.458;
@@ -75,9 +76,12 @@ const BODIES = [
     facts: '赤道半径 24,764 km · 一天 16 时 6 分 · 一年 164.8 年' },
   { id: 'pluto', name: '冥王星', R: 1188.3, tex: 'plutomap1k.jpg', view: 4, color: '#d8c3a8', soi: 3.1e6, group: '矮行星',
     facts: '半径 1,188 km · 一天 6.39 地球日 · 一年 248 年' },
+  { id: 'iss', name: '国际空间站', R: 0.05, view: 6000, color: '#7df4ff', parent: 'earth', group: '航天器', available: false,
+    facts: 'NORAD 25544 · CelesTrak 双行轨道根数 / SGP4' },
 ];
 const B = Object.fromEntries(BODIES.map((b) => [b.id, b]));
 for (const b of BODIES) { b.pos = new THREE.Vector3(); b.rel = new THREE.Vector3(); b.basis = new THREE.Matrix4(); b.tilt = new THREE.Matrix4(); }
+const issState = { tle: null, fetchedAt: -Infinity, trackAt: -Infinity, restoreOrbit: false };
 
 // ---------- 着色器公共片段 ----------
 const eclipseUniforms = (occluder) => ({
@@ -411,6 +415,10 @@ for (const b of BODIES) {
     b.obj.add(b.glow);
   } else if (b.id === 'earth') {
     mesh = makeEarth(b);
+  } else if (b.id === 'iss') {
+    mesh = new THREE.Mesh(sphereGeo, new THREE.MeshBasicMaterial({ color: b.color }));
+    b.marker = new THREE.Sprite(new THREE.SpriteMaterial({ map: glowTexture(), color: b.color, depthWrite: false }));
+    b.obj.add(b.marker);
   } else {
     const map = b.tex ? tex(b.tex) : noiseTexture(b.noise);
     mesh = new THREE.Mesh(sphereGeo, new THREE.MeshPhongMaterial({ map, shininess: 4, specular: 0x0a0a0a }));
@@ -597,6 +605,10 @@ const galOrbits = GAL.map((id) => {
   l.frustumCulled = false; l.userData.body = B[id]; l.userData.baseOp = 0.3;
   orbitGroup.add(l); return l;
 });
+const ISS_SAMPLES = 90;
+const issOrbit = new THREE.Line(new THREE.BufferGeometry().setAttribute('position', new THREE.BufferAttribute(new Float32Array((ISS_SAMPLES + 1) * 3), 3)), lineMat(B.iss.color, 0.7));
+issOrbit.frustumCulled = false;
+orbitGroup.add(issOrbit);
 
 // 轨道线：以当前时刻为中心、按同一星历采样一个周期，保证天体恰好位于轨道线上
 const TRACKS = [
@@ -620,6 +632,38 @@ function updateOrbitGeometry(d, all = false) {
     else if (v > wv) { wv = v; worst = t; }
   }
   if (worst) refreshTrack(worst, d);
+}
+
+function updateIssOrbit(t) {
+  const tle = issState.tle, ms = time.ms;
+  issOrbit.position.copy(B.earth.rel);
+  issOrbit.visible = B.iss.available && ISS.isFresh(tle, ms - tle.period / 2) && ISS.isFresh(tle, ms + tle.period / 2);
+  if (!issOrbit.visible || Math.abs(ms - issState.trackAt) < 30000) return;
+  const arr = issOrbit.geometry.attributes.position;
+  for (let i = 0; i <= ISS_SAMPLES; i++) {
+    const p = ISS.position(tle, t.AddDays((i / ISS_SAMPLES - 0.5) * tle.period / 86400000));
+    if (!p) { issOrbit.visible = false; return; }
+    toScene(p, tmpV);
+    arr.setXYZ(i, tmpV.x, tmpV.y, tmpV.z);
+  }
+  issState.trackAt = ms;
+  arr.needsUpdate = true;
+}
+
+async function loadIss() {
+  issState.fetchedAt = Date.now();
+  try {
+    const response = await fetch('./live/iss.txt', { cache: 'no-cache' });
+    const tle = response.ok ? ISS.parseTle(await response.text()) : null;
+    if (!tle) return;
+    issState.tle = tle;
+    issState.trackAt = -Infinity;
+    if (issState.restoreOrbit && selected === B.iss && nav.mode === 'orbit' && nav.ref === B.earth) {
+      updateEphemeris();
+      if (B.iss.available) setOrbit(B.iss);
+    }
+    issState.restoreOrbit = false;
+  } catch {}
 }
 
 // ---------- 星历与姿态 ----------
@@ -647,7 +691,10 @@ function updateEphemeris() {
     const Y = [jZ[1] * X[2] - jZ[2] * X[1], jZ[2] * X[0] - jZ[0] * X[2], jZ[0] * X[1] - jZ[1] * X[0]];
     setBasis(B[id], { X, Y, Z: jZ });
   });
-  for (const b of BODIES) toScene(P[b.id], b.pos);
+  for (const b of BODIES) if (b !== B.iss) toScene(P[b.id], b.pos);
+  const iss = ISS.position(issState.tle, t);
+  B.iss.available = !!iss;
+  if (iss) toScene(iss, B.iss.pos).add(B.earth.pos);
   toScene(EPH.eclipseSun(t), earthEclipse.eclipseSun.value);
   earthEclipse.eclipseOccluder.value.copy(B.moon.pos).sub(B.earth.pos);
   moonEclipse.eclipseSun.value.copy(earthEclipse.eclipseSun.value).sub(earthEclipse.eclipseOccluder.value);
@@ -724,6 +771,7 @@ function lookQuat(dir, q = new THREE.Quaternion()) { lookM.lookAt(ORIGIN, dir, U
 function viewDir(b) {
   if (b.id === 'sun') return null;
   const s = B.sun.pos.clone().sub(b.pos).normalize();
+  if (b === B.iss) return b.pos.clone().sub(B.earth.pos).normalize().addScaledVector(s, 0.45).normalize();
   const perp = new THREE.Vector3().crossVectors(s, UP).normalize();
   return s.multiplyScalar(0.55).add(perp.multiplyScalar(0.8)).add(UP.clone().multiplyScalar(0.22)).normalize();
 }
@@ -738,6 +786,7 @@ function eclipseView(type) {
   return closest.addScaledVector(ray, -depth).normalize().addScaledVector(sun, 0.3 / sun.length()).normalize();
 }
 function flyTo(b, keepDist = false, direction = null) {
+  if (b.available === false) { selectBody(b); return; }
   if (nav.mode === 'sky') { camera.fov = 60; camera.updateProjectionMatrix(); }
   const p0 = camWorld.clone().sub(b.pos);
   if (p0.length() < 1) p0.set(0, 0, 1);
@@ -755,11 +804,16 @@ const qI = new THREE.Quaternion(), qT = new THREE.Quaternion(), qL = new THREE.Q
 const ease = (x) => (x < 0.5 ? 4 * x * x * x : 1 - (-2 * x + 2) ** 3 / 2);
 function nearest() {
   let best = null, alt = Infinity;
-  for (const b of BODIES) { const a = camWorld.distanceTo(b.pos) - b.R; if (a < alt) { alt = a; best = b; } }
+  for (const b of BODIES) { if (b.available === false) continue; const a = camWorld.distanceTo(b.pos) - b.R; if (a < alt) { alt = a; best = b; } }
   return { body: best, alt };
 }
 function updateNav(dt) {
   if (nav.mode === 'sky') { updateSkyNav(); return; }
+  if (nav.ref.available === false) {
+    const previous = selected;
+    setOrbit(B.earth);
+    selectBody(previous);
+  }
   if (nav.mode === 'fly') {
     const f = nav.fly; f.t += dt;
     const x = Math.min(1, f.t / f.dur), s = ease(x);
@@ -810,6 +864,7 @@ function updateNav(dt) {
   camWorld.copy(nav.ref.pos).add(nav.offset);
   // 防止穿入天体
   for (const b of BODIES) {
+    if (b.available === false) continue;
     const dv = camWorld.clone().sub(b.pos), dl = dv.length(), min = b.R * 1.0005 + 0.05;
     if (dl < min) { camWorld.copy(b.pos).add(dv.multiplyScalar(min / Math.max(dl, 1e-6))); nav.offset.copy(camWorld).sub(nav.ref.pos); }
   }
@@ -898,7 +953,7 @@ function updateModeBtn() {
 function orbitNearest() {
   camWorld.copy(nav.ref.pos).add(nav.offset);
   let best = nav.ref, bd = Infinity;
-  for (const b of BODIES) { const r = camWorld.distanceTo(b.pos) / b.R; if (r < bd) { bd = r; best = b; } }
+  for (const b of BODIES) { if (b.available === false) continue; const r = camWorld.distanceTo(b.pos) / b.R; if (r < bd) { bd = r; best = b; } }
   flyTo(nav.ref.id === 'sun' && bd < 400 ? best : nav.ref, true);
 }
 function toggleSpaceMode() {
@@ -1034,6 +1089,7 @@ function restoreFromHash() {
   time.paused = params.get('p') === '1';
   const id = params.get('b');
   const b = Object.hasOwn(B, id) ? B[id] : B.earth;
+  issState.restoreOrbit = false;
   updateEphemeris();
   updateOrbitGeometry(EPH.daysSinceJ2000(time.ms), true);
   const number = (key, min, max, fallback) => {
@@ -1048,13 +1104,17 @@ function restoreFromHash() {
     skyState.locationRequest++;
     enterSky(...(valid ? [lat, lon, city || '链接地点'] : [...CITIES.北京, '北京（链接坐标无效）']), az, alt, fov);
     selectBody(Object.hasOwn(B, id) ? b : B.moon);
+  } else if (b.available === false) {
+    setOrbit(B.earth);
+    selectBody(b);
+    issState.restoreOrbit = !issState.tle;
   } else setOrbit(b);
 }
 addEventListener('hashchange', restoreFromHash);
 
 function viewHash() {
   const inSky = nav.mode === 'sky';
-  const params = new URLSearchParams({ b: inSky ? selected.id : nav.ref.id });
+  const params = new URLSearchParams({ b: inSky || (issState.restoreOrbit && selected === B.iss) ? selected.id : nav.ref.id });
   if (inSky) {
     const { latitude, longitude } = skyState.observer;
     params.set('v', 'sky'); params.set('lat', latitude); params.set('lon', longitude);
@@ -1119,6 +1179,7 @@ const dtf = new Intl.DateTimeFormat('zh-CN', { year: 'numeric', month: '2-digit'
 function updateSkyInfo() {
   const b = selected, info = $('infoBody');
   if (b === B.earth) { info.textContent = '地球是你的观测位置。'; return; }
+  if (b === B.iss) { updateIssSkyInfo(info); return; }
   const apparent = skyState.apparent[b.id];
   const { alt, az } = apparent ?? horizontalAngles(b.rel);
   const ms = time.ms;
@@ -1131,6 +1192,24 @@ function updateSkyInfo() {
   const format = (t) => t === null ? '一年内无事件' : dtf.format(t);
   info.innerHTML = `高度 ${alt.toFixed(2)}° · 方位 ${az.toFixed(2)}°` +
     (events.times ? `<br>升起 ${format(events.times[0])}<br>落下 ${format(events.times[1])}<br>时间为设备本地时间` : '<br>暂无升落星历');
+}
+
+const ISS_UNAVAILABLE = '位置不可用：缺少有效的空间站轨道数据，或与模拟时间相差超过 14 天。';
+function updateIssSkyInfo(info) {
+  if (!B.iss.available) { info.textContent = ISS_UNAVAILABLE; return; }
+  const { observer } = skyState, { tle } = issState, ms = time.ms;
+  const { alt, az } = horizontalAngles(B.iss.rel);
+  let cached = issState.pass;
+  if (!cached || cached.observer !== observer || cached.tle !== tle || ms < cached.from || ms >= cached.until) {
+    const pass = ISS.visiblePass(tle, ms, observer);
+    cached = issState.pass = { observer, tle, from: ms, until: pass?.end ?? ms + 300000, pass };
+  }
+  const { pass } = cached;
+  const position = `高度 ${alt.toFixed(2)}° · 方位 ${az.toFixed(2)}°`;
+  if (!pass) { info.innerHTML = `${position}<br>未来 3 天内未找到可见过境`; return; }
+  const compass = ['北', '东北', '东', '东南', '南', '西南', '西', '西北'];
+  const direction = compass[Math.round(pass.az / 45) % 8];
+  info.innerHTML = `${position}<br>可见过境（本地时间）<br>开始 ${dtf.format(pass.start)} · ${direction} ${Math.round(pass.az)}°<br>最高 ${pass.maxAlt.toFixed(1)}°<br>结束 ${dtf.format(pass.end)}`;
 }
 
 function renderEvents() {
@@ -1181,6 +1260,7 @@ function updateHud(now) {
   $('hudSun').textContent = fmtDist(camWorld.length());
   if (selected) {
     const b = selected;
+    if (b.available === false) { $('infoBody').textContent = ISS_UNAVAILABLE; return; }
     const dCam = camWorld.distanceTo(b.pos);
     const dEarth = b.id === 'earth' ? null : b.pos.distanceTo(B.earth.pos);
     const dSun = b.pos.length();
@@ -1202,7 +1282,7 @@ function updateLabels() {
   for (const b of BODIES) {
     const el = b.label;
     const dist = b.rel.length();
-    let vis = show && b.rel.dot(fwd) > 0 && (!inSky || (b !== B.earth && b.rel.dot(skyState.up) >= 0));
+    let vis = show && b.available !== false && b.rel.dot(fwd) > 0 && (!inSky || (b !== B.earth && b.rel.dot(skyState.up) >= 0));
     if (vis) {
       proj.copy(b.rel).project(camera);
       vis = Math.abs(proj.x) < 1.2 && Math.abs(proj.y) < 1.2;
@@ -1210,7 +1290,7 @@ function updateLabels() {
     if (vis) {
       const dir = b.rel.clone().divideScalar(dist);
       for (const o of BODIES) {
-        if (o === b || (inSky && o === B.earth)) continue;
+        if (o === b || o.available === false || (inSky && o === B.earth)) continue;
         const od = o.rel.length();
         if (od >= dist) continue;
         const t = o.rel.dot(dir);
@@ -1286,6 +1366,8 @@ function frame(now) {
   updateSkyScene(t, inSky);
 
   for (const b of BODIES) {
+    if (b === B.iss) b.obj.visible = b.available;
+    if (b.available === false) continue;
     b.rel.copy(b.pos).sub(camWorld);
     if (inSky) {
       const apparent = skyState.apparent[b.id];
@@ -1304,6 +1386,7 @@ function frame(now) {
   const sunRel = B.sun.rel;
   sunLight.position.copy(sunRel);
   const sd = sunRel.length();
+  B.iss.marker.scale.setScalar(2 * B.iss.rel.length() * Math.tan(camera.fov * DEG / 2) * 24 / innerHeight);
   const glareSize = 2 * sd * Math.tan(camera.fov * DEG / 2) * 95 / innerHeight;
   B.sun.mat.uniforms.skyView.value = inSky ? 1 : 0;
   B.sun.glow.scale.setScalar(inSky ? Math.max(B.sun.R * 8, glareSize) : Math.max(B.sun.R * 9, sd * 0.05));
@@ -1327,13 +1410,16 @@ function frame(now) {
   if (navigator.onLine) {
     if (Date.now() - cloudState.at > 1800000) loadLiveClouds();
     if (Date.now() - sunState.at > 900000) loadSdo();
+    if (Date.now() - issState.fetchedAt > 3600000) loadIss();
   }
 
   if (!inSky) updateOrbitGeometry(d);
+  if (orbitGroup.visible) updateIssOrbit(t);
   for (const id of ORBIT_IDS) orbitLines[id].position.copy(sunRel);
   moonOrbit.position.copy(B.earth.rel);
   galOrbits.forEach((l) => l.position.copy(B.jupiter.rel));
   for (const l of orbitGroup.children) {
+    if (l === issOrbit) continue;
     const b = l.userData.body;
     const r = b.rel.length() / b.R;
     l.material.opacity = l.userData.baseOp * THREE.MathUtils.clamp((r - 8) / 60, 0, 1);
@@ -1357,6 +1443,6 @@ setSpeedExp(0);
 requestAnimationFrame(frame);
 
 // 调试/自动化用
-window.__ss = { nav, B, time, flyTo, camera, skyState };
+window.__ss = { nav, B, time, flyTo, camera, skyState, issOrbit };
 
 if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js', { scope: './' }).catch(() => {});

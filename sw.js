@@ -1,9 +1,9 @@
 const PREFIX = 'solar-system-';
-const CACHE = PREFIX + 'v1';
+const CACHE = PREFIX + 'v2';
 const scope = new URL(self.registration.scope);
 const SHELL = [
-  './', './index.html', './style.css', './src/main.js', './src/ephemeris.js',
-  './vendor/three.module.js', './vendor/astronomy.js', './data/sky.json', './data/asteroids.bin',
+  './', './index.html', './style.css', './src/main.js', './src/ephemeris.js', './src/iss.js',
+  './vendor/three.module.js', './vendor/astronomy.js', './vendor/satellite.es.js', './data/sky.json', './data/asteroids.bin',
 ];
 
 self.addEventListener('install', (event) => event.waitUntil((async () => {
