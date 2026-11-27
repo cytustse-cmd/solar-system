@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="theme-color" content="#000000" />
+<title>实时太阳系 · 自由漫游</title>
+<link rel="stylesheet" href="style.css" />
+<script type="importmap">{ "imports": { "three": "./vendor/three.module.js" } }</script>
+</head>
+<body>
+<div id="app"></div>
+<div id="labels"></div>
+
+<div id="loading"><div class="ltitle">实时太阳系</div><div class="lbar"><div id="lprog"></div></div><div id="ltext">正在加载星图与行星纹理…</div></div>
+
+<div id="hud" class="panel">
+  <div id="clock">--</div>
+  <div id="sync"></div>
+  <div class="row"><span class="k">参考系</span><span id="hudRef">-</span></div>
+  <div class="row"><span class="k">距表面</span><span id="hudAlt">-</span></div>
+  <div class="row"><span class="k">速度</span><span id="hudSpeed">-</span></div>
+  <div class="row"><span class="k">距太阳</span><span id="hudSun">-</span></div>
+</div>
+
+<div id="info" class="panel">
+  <div id="infoName"></div>
+  <div id="infoBody"></div>
+</div>
+
+<div id="topbar">
+  <button id="btnBodies" class="btn">天体</button>
+  <button id="btnSettings" class="btn">显示</button>
+  <button id="btnHelp" class="btn">?</button>
+</div>
+
+<div id="bodiesPanel" class="panel drop hidden"></div>
+<div id="settingsPanel" class="panel drop hidden">
+  <label><input type="checkbox" id="optOrbits" checked /> 轨道线</label>
+  <label><input type="checkbox" id="optLabels" checked /> 天体标签</label>
+  <label><input type="checkbox" id="optConst" /> 星座连线与亮星名</label>
+  <label><input type="checkbox" id="optMilky" checked /> 银河背景</label>
+  <label><input type="checkbox" id="optBelt" checked /> 小行星带（示意）</label>
+  <div class="srow"><span>飞行速度倍率</span><span id="speedVal">×1</span></div>
+  <input type="range" id="speedRange" min="-3" max="3" step="0.1" value="0" />
+</div>
+
+<div id="timebar" class="panel">
+  <button id="tSlower" class="btn" title="减慢/倒退">⏪</button>
+  <button id="tPause" class="btn" title="暂停/继续">⏸</button>
+  <button id="tFaster" class="btn" title="加快">⏩</button>
+  <span id="tRate">实时</span>
+  <button id="tNow" class="btn accent">回到现在</button>
+</div>
+
+<div id="modeBtn" class="btn round">自由飞行</div>
+<div id="joy"><div id="knob"></div></div>
+<div id="vbtns"><div id="btnUp" class="btn round">升</div><div id="btnDown" class="btn round">降</div></div>
+
+<div id="help" class="panel hidden">
+  <h3>操作说明</h3>
+  <p><b>环绕模式</b>：拖动旋转视角，滚轮/双指捏合缩放。</p>
+  <p><b>自由飞行</b>：拖动转向；电脑用 W/A/S/D 前后左右，R/F 升降，Q/E 翻滚，按住 Shift 加速；手机用左下摇杆和右下“升/降”。速度会随距天体表面的高度自动调整。</p>
+  <p>点击天体名称或“天体”列表即可飞往该天体，飞到后自动进入环绕模式并随其公转。</p>
+  <p>数字键 0–9：太阳、水星…冥王星。</p>
+  <p class="muted">行星位置按 NASA JPL 轨道根数、月球按 Schlyter 月球理论、木卫按 Meeus 算法、自转按 IAU 参数实时计算；恒星来自依巴谷星表（亮于 6 等），银河为 ESO 全天图。小行星带为示意分布。</p>
+  <p class="muted"><a href="https://app.devin.ai/sessions/1d2f5d0c85624bcfb95bed7e3d260b0f" target="_blank">提出修改</a></p>
+  <button id="helpClose" class="btn accent">开始漫游</button>
+</div>
+
+<script type="module" src="src/main.js"></script>
+</body>
+</html>
