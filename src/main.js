@@ -585,7 +585,7 @@ manager.itemStart('sky'); skyLoad.finally(() => manager.itemEnd('sky'));
 
 // ---------- 小行星带（示意，按开普勒运动） ----------
 // 真实小行星：NASA JPL SBDB 中绝对星等 H<15 的全部小行星（含近地、主带、特洛伊、柯伊伯带），二体开普勒外推
-const AST_EPOCH = 2461200.5 - 2451545.0;
+let asteroidEpoch = 0;
 const belt = new THREE.Points(new THREE.BufferGeometry(), new THREE.ShaderMaterial({
   uniforms: { dt: { value: 0 }, pr: { value: renderer.getPixelRatio() } },
   vertexShader: /* glsl */`
@@ -617,7 +617,43 @@ void main() {
 }));
 belt.frustumCulled = false;
 scene.add(belt);
-fetch('data/asteroids.bin').then((r) => r.arrayBuffer()).then((buf) => {
+
+async function loadAsteroids() {
+  const url = new URL('data/asteroids.bin', document.baseURI);
+  // Store epoch and binary in one cache entry so interrupted updates cannot mismatch them.
+  const cache = await globalThis.caches?.open('asteroid-catalog-v1').catch(() => null);
+  const last = await cache?.match(url.href).catch(() => null);
+  try {
+    const response = await fetch('data/asteroids.json', { cache: 'no-cache' });
+    if (!response.ok) throw new Error('Asteroid manifest unavailable');
+    const { epoch, rows, sha256 } = await response.json();
+    if (!(epoch >= 2400000 && epoch <= 2500000 && Number.isFinite(epoch)
+      && Number.isInteger(rows) && rows > 0 && /^[A-Za-z0-9+/]{43}=$/.test(sha256))) {
+      throw new Error('Invalid asteroid manifest');
+    }
+    if (last?.headers.get('x-asteroid-version') === sha256 && Number(last.headers.get('x-asteroid-epoch')) === epoch) {
+      return { epoch, buf: await last.arrayBuffer() };
+    }
+    const key = url.href;
+    url.searchParams.set('v', sha256);
+    const binary = await fetch(url, { integrity: 'sha256-' + sha256 });
+    if (!binary.ok) throw new Error('Asteroid binary unavailable');
+    const buf = await binary.arrayBuffer();
+    if (buf.byteLength !== rows * 24) throw new Error('Invalid asteroid binary size');
+    await cache?.put(key, new Response(buf, {
+      headers: { 'x-asteroid-epoch': epoch, 'x-asteroid-version': sha256 },
+    })).catch(() => {});
+    return { epoch, buf };
+  } catch (error) {
+    if (last) return { epoch: Number(last.headers.get('x-asteroid-epoch')), buf: await last.arrayBuffer() };
+    // The pre-manifest service worker cached the original binary at a fixed epoch.
+    const legacy = await globalThis.caches?.match(url.href, { cacheName: 'solar-system-v2' }).catch(() => null);
+    if (legacy) return { epoch: 2461200.5, buf: await legacy.arrayBuffer() };
+    throw error;
+  }
+}
+
+loadAsteroids().then(({ epoch, buf }) => {
   const all = new Float32Array(buf), N = Math.min(all.length / 6, isTouch ? 30000 : 85000);
   const el1 = new Float32Array(N * 4), el2 = new Float32Array(N * 2);
   for (let i = 0; i < N; i++) {
@@ -628,7 +664,8 @@ fetch('data/asteroids.bin').then((r) => r.arrayBuffer()).then((buf) => {
   geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(N * 3), 3));
   geo.setAttribute('el1', new THREE.BufferAttribute(el1, 4));
   geo.setAttribute('el2', new THREE.BufferAttribute(el2, 2));
-});
+  asteroidEpoch = epoch - 2451545;
+}).catch(() => {});
 
 // ---------- 轨道线 ----------
 const ORBIT_IDS = ['mercury', 'venus', 'emb', 'mars', 'jupiter', 'saturn', 'uranus', 'neptune', 'pluto'];
@@ -1507,7 +1544,7 @@ function frame(now) {
     if (line.visible) line.material.opacity = opacity * THREE.MathUtils.clamp((b.rel.length() / b.R - 8) / 60, 0, 1);
   }
   belt.position.copy(camWorld).negate();
-  belt.material.uniforms.dt.value = d - AST_EPOCH;
+  belt.material.uniforms.dt.value = d - asteroidEpoch;
 
   renderer.render(scene, camera);
   updateLabels();

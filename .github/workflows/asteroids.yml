@@ -1,0 +1,28 @@
+name: Refresh asteroid catalogue
+
+on:
+  schedule:
+    - cron: '23 4 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: asteroid-refresh
+  cancel-in-progress: false
+
+jobs:
+  refresh:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build asteroid catalogue
+        run: python3 scripts/build_asteroids.py
+      - name: Commit updated catalogue
+        run: |
+          git add data/asteroids.bin data/asteroids.json
+          if git diff --cached --quiet; then exit 0; fi
+          git -c user.name='github-actions[bot]' -c user.email='41898282+github-actions[bot]@users.noreply.github.com' commit -m 'Refresh asteroid catalogue'
+          git push origin HEAD:main
