@@ -425,6 +425,13 @@ for (const b of BODIES) {
 const sky = new THREE.Group();
 scene.add(sky);
 const SKY_R = 1e9;
+const skyColor = new THREE.Color();
+const nightColor = new THREE.Color(0x000000), dayColor = new THREE.Color(0x438bce);
+const ground = new THREE.Mesh(new THREE.SphereGeometry(10, 64, 16, 0, 2 * Math.PI, Math.PI / 2, Math.PI / 2),
+  new THREE.MeshBasicMaterial({ color: 0x171e27, side: THREE.BackSide }));
+ground.visible = false;
+scene.add(ground);
+const starFade = { value: 1 };
 
 // 银河（ESO 全天图，银道坐标等距柱状投影）
 const eclFromScene = new THREE.Matrix3().set(1, 0, 0, 0, 0, -1, 0, 1, 0);
@@ -438,17 +445,17 @@ const galFromScene = galFromEq.clone().multiply(eqFromEcl).multiply(eclFromScene
 const mwTex = tl.load(texturePath('milkyway.jpg'));
 mwTex.colorSpace = THREE.SRGBColorSpace; mwTex.generateMipmaps = false; mwTex.minFilter = THREE.LinearFilter;
 const milky = new THREE.Mesh(new THREE.SphereGeometry(SKY_R * 1.5, 64, 32), new THREE.ShaderMaterial({
-  uniforms: { map: { value: mwTex }, toGal: { value: galFromScene }, intensity: { value: 0.55 } },
+  uniforms: { map: { value: mwTex }, toGal: { value: galFromScene }, intensity: { value: 0.55 }, tint: { value: skyColor } },
   vertexShader: `varying vec3 vDir; void main(){ vDir = position; gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0); }`,
   fragmentShader: `
-uniform sampler2D map; uniform mat3 toGal; uniform float intensity; varying vec3 vDir;
+uniform sampler2D map; uniform mat3 toGal; uniform float intensity; uniform vec3 tint; varying vec3 vDir;
 void main(){
   vec3 g = normalize(toGal * normalize(vDir));
   float l = atan(g.y, g.x); float b = asin(clamp(g.z, -1.0, 1.0));
   vec2 uv = vec2(0.5 - l / 6.28318530718, 0.5 + b / 3.14159265359);
   vec3 c = texture2D(map, uv).rgb;
   c = max(c - 0.015, 0.0) * intensity;
-  gl_FragColor = vec4(c, 1.0);
+  gl_FragColor = vec4(c + tint, 1.0);
   #include <colorspace_fragment>
 }`,
   side: THREE.BackSide, depthTest: false, depthWrite: false,
@@ -490,11 +497,11 @@ const skyLoad = fetch('data/sky.json').then((r) => r.json()).then((data) => {
   geo.setAttribute('starColor', new THREE.BufferAttribute(col, 3));
   geo.setAttribute('size', new THREE.BufferAttribute(size, 1));
   const pts = new THREE.Points(geo, new THREE.ShaderMaterial({
-    uniforms: { pr: { value: renderer.getPixelRatio() } },
+    uniforms: { pr: { value: renderer.getPixelRatio() }, fade: starFade },
     vertexShader: `attribute float size; attribute vec3 starColor; varying vec3 vC; uniform float pr;
       void main(){ vC = starColor; gl_PointSize = size * pr; gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0); }`,
-    fragmentShader: `varying vec3 vC; void main(){ vec2 p = gl_PointCoord - 0.5; float r2 = dot(p,p) * 4.0;
-      float a = exp(-r2 * 5.0) + 0.25 * exp(-r2 * 1.2); gl_FragColor = vec4(vC * a, 1.0); }`,
+    fragmentShader: `varying vec3 vC; uniform float fade; void main(){ vec2 p = gl_PointCoord - 0.5; float r2 = dot(p,p) * 4.0;
+      float a = exp(-r2 * 5.0) + 0.25 * exp(-r2 * 1.2); gl_FragColor = vec4(vC * a * fade, 1.0); }`,
     blending: THREE.AdditiveBlending, depthTest: true, depthWrite: false, transparent: true,
   }));
   pts.renderOrder = -10; pts.frustumCulled = false;
@@ -622,6 +629,7 @@ function setBasis(b, ax, W = true) {
 function updateEphemeris() {
   const { t, P, gal } = EPH.state(time.ms);
   for (const b of BODIES) {
+    if (b.id === 'earth' && nav.mode === 'sky') { setBasis(b, EPH.earthFixed(t)); continue; }
     const o = EPH.orient(b.id, t);
     if (o) {
       setBasis(b, EPH.axesEcl(o[0], o[1], o[2]));
@@ -642,6 +650,7 @@ function updateEphemeris() {
   earthEclipse.eclipseOccluder.value.copy(B.moon.pos).sub(B.earth.pos);
   moonEclipse.eclipseSun.value.copy(earthEclipse.eclipseSun.value).sub(earthEclipse.eclipseOccluder.value);
   moonEclipse.eclipseOccluder.value.copy(earthEclipse.eclipseOccluder.value).negate();
+  return t;
 }
 
 // ---------- 时间 ----------
@@ -660,6 +669,54 @@ const nav = {
   keys: new Set(), joy: { x: 0, y: 0 }, vUp: 0, dragX: 0, dragY: 0, zoom: 1, roll: 0, speed: 0,
 };
 const camWorld = new THREE.Vector3();
+const CITIES = {
+  北京: [39.9042, 116.4074], 上海: [31.2304, 121.4737], 广州: [23.1291, 113.2644],
+  香港: [22.3193, 114.1694], 台北: [25.033, 121.5654], 纽约: [40.7128, -74.006], 伦敦: [51.5072, -0.1276],
+};
+const skyState = {
+  observer: null, az: 90, alt: 0, riseSet: null, apparent: {}, locationRequest: 0,
+  offset: new THREE.Vector3(), localUp: new THREE.Vector3(), localNorth: new THREE.Vector3(), localEast: new THREE.Vector3(),
+  up: new THREE.Vector3(), north: new THREE.Vector3(), east: new THREE.Vector3(), direction: new THREE.Vector3(),
+};
+function setObserver(lat, lon) {
+  const p = lat * DEG, l = lon * DEG;
+  const sp = Math.sin(p), cp = Math.cos(p), sl = Math.sin(l), cl = Math.cos(l);
+  const flattening = 0.996647180302104;
+  const r = 6378.1366 / Math.hypot(cp, flattening * sp);
+  skyState.observer = EPH.groundObserver(lat, lon);
+  skyState.riseSet = null;
+  skyState.localUp.set(cp * cl, sp, -cp * sl);
+  skyState.localNorth.set(-sp * cl, cp, sp * sl);
+  skyState.localEast.set(-sl, 0, -cl);
+  skyState.offset.set(r * cp * cl, r * flattening ** 2 * sp, -r * cp * sl).addScaledVector(skyState.localUp, 0.002);
+}
+function horizontalDirection(az, alt, out) {
+  const a = az * DEG, h = alt * DEG;
+  return out.copy(skyState.north).multiplyScalar(Math.cos(a) * Math.cos(h))
+    .addScaledVector(skyState.east, Math.sin(a) * Math.cos(h)).addScaledVector(skyState.up, Math.sin(h));
+}
+function horizontalAngles(direction) {
+  const n = direction.dot(skyState.north), e = direction.dot(skyState.east);
+  return { az: (Math.atan2(e, n) / DEG + 360) % 360, alt: Math.atan2(direction.dot(skyState.up), Math.hypot(n, e)) / DEG };
+}
+function updateSkyNav() {
+  const { basis } = B.earth;
+  skyState.up.copy(skyState.localUp).applyMatrix4(basis);
+  skyState.north.copy(skyState.localNorth).applyMatrix4(basis);
+  skyState.east.copy(skyState.localEast).applyMatrix4(basis);
+  nav.offset.copy(skyState.offset).applyMatrix4(basis);
+  camWorld.copy(B.earth.pos).add(nav.offset);
+  const k = camera.fov / innerHeight;
+  skyState.az = (skyState.az - nav.dragX * k) % 360;
+  skyState.alt = THREE.MathUtils.clamp(skyState.alt + nav.dragY * k, -89.9, 89.9);
+  if (nav.zoom !== 1) {
+    camera.fov = THREE.MathUtils.clamp(camera.fov * nav.zoom, 5, 100);
+    camera.updateProjectionMatrix();
+  }
+  lookM.lookAt(ORIGIN, horizontalDirection(skyState.az, skyState.alt, skyState.direction), skyState.up);
+  camera.quaternion.setFromRotationMatrix(lookM);
+  nav.dragX = nav.dragY = 0; nav.zoom = 1; nav.speed = 0;
+}
 const lookM = new THREE.Matrix4(), ORIGIN = new THREE.Vector3();
 function lookQuat(dir, q = new THREE.Quaternion()) { lookM.lookAt(ORIGIN, dir, UP); return q.setFromRotationMatrix(lookM); }
 function viewDir(b) {
@@ -679,6 +736,7 @@ function eclipseView(type) {
   return closest.addScaledVector(ray, -depth).normalize().addScaledVector(sun, 0.3 / sun.length()).normalize();
 }
 function flyTo(b, keepDist = false, direction = null) {
+  if (nav.mode === 'sky') { camera.fov = 60; camera.updateProjectionMatrix(); }
   const p0 = camWorld.clone().sub(b.pos);
   if (p0.length() < 1) p0.set(0, 0, 1);
   const u0 = p0.clone().normalize();
@@ -699,6 +757,7 @@ function nearest() {
   return { body: best, alt };
 }
 function updateNav(dt) {
+  if (nav.mode === 'sky') { updateSkyNav(); return; }
   if (nav.mode === 'fly') {
     const f = nav.fly; f.t += dt;
     const x = Math.min(1, f.t / f.dur), s = ease(x);
@@ -783,10 +842,10 @@ const ORDER = ['sun', 'mercury', 'venus', 'earth', 'mars', 'jupiter', 'saturn', 
 addEventListener('keydown', (e) => {
   if (dateDialog.open || e.target.tagName === 'INPUT' || (e.code === 'Space' && e.target.tagName === 'BUTTON')) return;
   nav.keys.add(e.code);
-  if (/^Digit\d$/.test(e.code)) flyTo(B[ORDER[+e.code.slice(5)]]);
+  if (/^Digit\d$/.test(e.code)) chooseBody(B[ORDER[+e.code.slice(5)]]);
   if (e.code === 'KeyO') toggleOpt('optOrbits');
   if (e.code === 'KeyL') toggleOpt('optLabels');
-  if (e.code === 'KeyM') { if (nav.mode === 'free') orbitNearest(); else { nav.mode = 'free'; updateModeBtn(); } }
+  if (e.code === 'KeyM') toggleSpaceMode();
   if (e.code === 'Space') e.preventDefault();
 });
 addEventListener('keyup', (e) => nav.keys.delete(e.code));
@@ -816,44 +875,108 @@ for (const [id, v] of [['btnUp', 1], ['btnDown', -1]]) {
 // ---------- 界面 ----------
 const $ = (id) => document.getElementById(id);
 const labelsEl = $('labels');
+const cardinals = ['N', 'E', 'S', 'W'].map((name) => {
+  const el = document.createElement('div');
+  el.className = 'lbl cardinal hidden'; el.textContent = name;
+  labelsEl.appendChild(el);
+  return el;
+});
 const modeBtn = $('modeBtn');
-function updateModeBtn() { modeBtn.textContent = nav.mode === 'free' ? `环绕${nav.ref.name}` : '自由飞行'; }
+function updateModeBtn() {
+  const inSky = nav.mode === 'sky';
+  modeBtn.textContent = inSky ? '返回太空' : nav.mode === 'free' ? `环绕${nav.ref.name}` : '自由飞行';
+  $('btnSky').setAttribute('aria-pressed', String(inSky));
+  $('btnSky').classList.toggle('on', inSky);
+  document.body.classList.toggle('skyMode', inSky);
+  $('spaceHud').classList.toggle('hidden', inSky);
+  $('skyLocation').classList.toggle('hidden', !inSky);
+  if (!inSky) { skyState.locationRequest++; $('skyPanel').classList.add('hidden'); $('skyLocation').setAttribute('aria-expanded', 'false'); }
+  applyOpts();
+}
 function orbitNearest() {
   camWorld.copy(nav.ref.pos).add(nav.offset);
   let best = nav.ref, bd = Infinity;
   for (const b of BODIES) { const r = camWorld.distanceTo(b.pos) / b.R; if (r < bd) { bd = r; best = b; } }
   flyTo(nav.ref.id === 'sun' && bd < 400 ? best : nav.ref, true);
 }
-modeBtn.addEventListener('click', () => { if (nav.mode === 'free') orbitNearest(); else { nav.mode = 'free'; nav.fly = null; updateModeBtn(); } });
+function toggleSpaceMode() {
+  if (nav.mode === 'sky') setOrbit(B.earth);
+  else if (nav.mode === 'free') orbitNearest();
+  else { nav.mode = 'free'; nav.fly = null; updateModeBtn(); }
+}
+modeBtn.addEventListener('click', toggleSpaceMode);
 
 const eventsPanel = $('eventsPanel'), eventsButton = $('btnEvents');
-const panels = { btnBodies: $('bodiesPanel'), btnSettings: $('settingsPanel'), btnEvents: eventsPanel };
+const panels = { btnBodies: $('bodiesPanel'), btnSettings: $('settingsPanel'), btnEvents: eventsPanel, skyLocation: $('skyPanel') };
 function closeDrops() {
   for (const p of Object.values(panels)) p.classList.add('hidden');
   eventsButton.setAttribute('aria-expanded', 'false');
+  $('skyLocation').setAttribute('aria-expanded', 'false');
 }
 for (const [bid, p] of Object.entries(panels)) $(bid).addEventListener('click', () => {
   const hidden = p.classList.contains('hidden');
   closeDrops();
   if (!hidden) return;
   if (p === eventsPanel) { renderEvents(); eventsButton.setAttribute('aria-expanded', 'true'); }
+  if (bid === 'skyLocation') $(bid).setAttribute('aria-expanded', 'true');
   p.classList.remove('hidden');
 });
 $('btnHelp').addEventListener('click', () => $('help').classList.toggle('hidden'));
 $('helpClose').addEventListener('click', () => { $('help').classList.add('hidden'); localStorage.setItem('ss-help-seen', '1'); });
 
+function useLocation(lat, lon, name) {
+  setObserver(lat, lon);
+  $('skyLocation').textContent = `观测地点：${name} ▾`;
+  const coord = (deg, pos, neg) => Math.abs(deg).toFixed(4) + '°' + (deg < 0 ? neg : pos);
+  $('skyCoordinates').textContent = `${coord(lat, 'N', 'S')} · ${coord(lon, 'E', 'W')}`;
+  $('skyStatus').textContent = '';
+}
+function requestLocation() {
+  const request = ++skyState.locationRequest;
+  const active = () => nav.mode === 'sky' && request === skyState.locationRequest;
+  $('skyStatus').textContent = '正在定位…';
+  const fallback = () => {
+    if (active()) useLocation(...CITIES.北京, '北京（定位未成功）');
+  };
+  if (!navigator.geolocation) { fallback(); return; }
+  navigator.geolocation.getCurrentPosition(({ coords }) => {
+    if (active()) useLocation(coords.latitude, coords.longitude, '当前位置');
+  }, fallback, { timeout: 8000, maximumAge: 60000 });
+}
+function enterSky(lat, lon, name, az = 90, alt = 0, fov = 60) {
+  useLocation(lat, lon, name);
+  skyState.az = az; skyState.alt = alt;
+  nav.mode = 'sky'; nav.ref = B.earth; nav.fly = null;
+  nav.dragX = nav.dragY = 0; nav.zoom = 1;
+  camera.fov = fov; camera.updateProjectionMatrix();
+  updateModeBtn();
+}
+$('btnSky').addEventListener('click', () => {
+  closeDrops();
+  if (nav.mode === 'sky') { setOrbit(B.earth); return; }
+  enterSky(...CITIES.北京, '北京');
+  if (selected === B.earth) selectBody(B.moon);
+  requestLocation();
+});
+$('skyRetry').addEventListener('click', requestLocation);
+for (const [name, coords] of Object.entries(CITIES)) {
+  const btn = document.createElement('button'); btn.className = 'btn'; btn.textContent = name;
+  btn.addEventListener('click', () => { skyState.locationRequest++; useLocation(...coords, name); closeDrops(); });
+  $('skyCities').appendChild(btn);
+}
+
 const groups = {};
 for (const b of BODIES) (groups[b.group] ||= []).push(b);
 $('bodiesPanel').innerHTML = Object.entries(groups).map(([g, list]) =>
   `<div class="grp">${g}</div><div class="items">${list.map((b) => `<button class="btn" data-id="${b.id}">${b.name}</button>`).join('')}</div>`).join('');
-$('bodiesPanel').addEventListener('click', (e) => { const id = e.target.dataset?.id; if (id) { flyTo(B[id]); closeDrops(); } });
+$('bodiesPanel').addEventListener('click', (e) => { const id = e.target.dataset?.id; if (id) { chooseBody(B[id]); closeDrops(); } });
 
 function toggleOpt(id) { const el = $(id); el.checked = !el.checked; applyOpts(); }
 function applyOpts() {
-  orbitGroup.visible = $('optOrbits').checked;
+  orbitGroup.visible = nav.mode !== 'sky' && $('optOrbits').checked;
   constLines.visible = $('optConst').checked;
   milky.visible = $('optMilky').checked;
-  belt.visible = $('optBelt').checked;
+  belt.visible = nav.mode !== 'sky' && $('optBelt').checked;
 }
 for (const id of ['optOrbits', 'optLabels', 'optConst', 'optMilky', 'optBelt']) $(id).addEventListener('change', applyOpts);
 function setSpeedExp(v) {
@@ -891,7 +1014,16 @@ dateInput.addEventListener('change', () => {
   if (time.ms !== ms) dateInput.value = dateInputValue(time.ms);
 });
 
-function orbitFromHash() {
+function setOrbit(b) {
+  nav.mode = 'orbit'; nav.ref = b; nav.fly = null;
+  nav.dragX = nav.dragY = 0; nav.zoom = 1;
+  nav.offset.copy(viewDir(b) || new THREE.Vector3(0, 0, 1)).multiplyScalar(b.R * b.view);
+  camWorld.copy(b.pos).add(nav.offset);
+  camera.fov = 60; camera.updateProjectionMatrix();
+  selectBody(b);
+  updateModeBtn();
+}
+function restoreFromHash() {
   const params = new URLSearchParams(location.hash.slice(1));
   const ms = Date.parse(params.get('t'));
   const rate = params.get('r');
@@ -902,16 +1034,30 @@ function orbitFromHash() {
   const b = Object.hasOwn(B, id) ? B[id] : B.earth;
   updateEphemeris();
   updateOrbitGeometry(EPH.daysSinceJ2000(time.ms), true);
-  nav.mode = 'orbit'; nav.ref = b; nav.fly = null;
-  nav.offset.copy(viewDir(b) || new THREE.Vector3(0, 0, 1)).multiplyScalar(b.R * b.view);
-  camWorld.copy(b.pos).add(nav.offset);
-  selectBody(b);
-  updateModeBtn();
+  const number = (key, min, max, fallback) => {
+    const str = params.get(key), n = Number(str);
+    return str?.trim() && n >= min && n <= max ? n : fallback;
+  };
+  if (params.get('v') === 'sky') {
+    const lat = number('lat', -90, 90), lon = number('lon', -180, 180);
+    const az = number('az', -360, 360, 90), alt = number('alt', -89.9, 89.9, 0), fov = number('fov', 5, 100, 60);
+    const valid = lat !== undefined && lon !== undefined;
+    const city = Object.keys(CITIES).find((name) => CITIES[name][0] === lat && CITIES[name][1] === lon);
+    skyState.locationRequest++;
+    enterSky(...(valid ? [lat, lon, city || '链接地点'] : [...CITIES.北京, '北京（链接坐标无效）']), az, alt, fov);
+    selectBody(Object.hasOwn(B, id) ? b : B.moon);
+  } else setOrbit(b);
 }
-addEventListener('hashchange', orbitFromHash);
+addEventListener('hashchange', restoreFromHash);
 
 function viewHash() {
-  const params = new URLSearchParams({ b: nav.ref.id });
+  const inSky = nav.mode === 'sky';
+  const params = new URLSearchParams({ b: inSky ? selected.id : nav.ref.id });
+  if (inSky) {
+    const { latitude, longitude } = skyState.observer;
+    params.set('v', 'sky'); params.set('lat', latitude); params.set('lon', longitude);
+    params.set('az', skyState.az.toFixed(3)); params.set('alt', skyState.alt.toFixed(3)); params.set('fov', camera.fov.toFixed(3));
+  }
   if (!isLive()) params.set('t', new Date(time.ms).toISOString());
   if (time.rateIdx !== 7) params.set('r', time.rateIdx);
   if (time.paused) params.set('p', '1');
@@ -945,13 +1091,14 @@ for (const b of BODIES) {
   const el = document.createElement('div');
   el.className = 'lbl'; el.style.color = b.color;
   el.innerHTML = `<span class="dot"></span><span>${b.name}</span>`;
-  el.addEventListener('click', (e) => { e.stopPropagation(); flyTo(b); });
+  el.addEventListener('click', (e) => { e.stopPropagation(); chooseBody(b); });
   labelsEl.appendChild(el);
   b.label = el;
 }
 
 let selected = null;
 function selectBody(b) { selected = b; $('infoName').textContent = b.name; }
+function chooseBody(b) { if (nav.mode === 'sky') selectBody(b); else flyTo(b); }
 
 const fmtDist = (km) => {
   if (km < 1) return `${(km * 1000).toFixed(0)} m`;
@@ -967,6 +1114,22 @@ const fmtSpeed = (v) => {
 };
 const lightTime = (km) => { const s = km / C_KMS; return s < 120 ? `${s.toFixed(1)} 光秒` : s < 7200 ? `${(s / 60).toFixed(1)} 光分` : `${(s / 3600).toFixed(2)} 光时`; };
 const dtf = new Intl.DateTimeFormat('zh-CN', { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
+function updateSkyInfo() {
+  const b = selected, info = $('infoBody');
+  if (b === B.earth) { info.textContent = '地球是你的观测位置。'; return; }
+  const apparent = skyState.apparent[b.id];
+  const { alt, az } = apparent ?? horizontalAngles(b.rel);
+  const ms = time.ms;
+  let events = skyState.riseSet;
+  if (!events || events.body !== b || ms < events.start || ms >= events.end) {
+    const times = apparent ? EPH.skyRiseSet(b.id, ms, skyState.observer) : null;
+    const end = Math.min(ms + 86400000, ...(times || []).filter((t) => t !== null));
+    events = skyState.riseSet = { body: b, start: ms, end, times };
+  }
+  const format = (t) => t === null ? '一年内无事件' : dtf.format(t);
+  info.innerHTML = `高度 ${alt.toFixed(2)}° · 方位 ${az.toFixed(2)}°` +
+    (events.times ? `<br>升起 ${format(events.times[0])}<br>落下 ${format(events.times[1])}<br>时间为设备本地时间` : '<br>暂无升落星历');
+}
 
 function renderEvents() {
   eventsPanel.innerHTML = '<h3>天象日历</h3><p class="muted">从当前模拟时间起 · 本地时间</p>';
@@ -1008,6 +1171,7 @@ function updateHud(now) {
   $('tRate').textContent = time.paused ? '暂停' : rateName(rate);
   $('tPause').textContent = time.paused ? '▶' : '⏸';
   if (time.ms === minTime || time.ms === maxTime) $('sync').textContent += '（已到星历精度范围边界）';
+  if (nav.mode === 'sky') { updateSkyInfo(); return; }
   const { body, alt } = nearest();
   $('hudRef').textContent = nav.ref.name;
   $('hudAlt').textContent = `${fmtDist(Math.max(0, alt))}（${body.name}）`;
@@ -1028,6 +1192,7 @@ function updateHud(now) {
 const proj = new THREE.Vector3(), fwd = new THREE.Vector3();
 function updateLabels() {
   const show = $('optLabels').checked;
+  const inSky = nav.mode === 'sky';
   const W = innerWidth, H = innerHeight;
   const f = H / 2 / Math.tan((camera.fov * DEG) / 2);
   camera.getWorldDirection(fwd);
@@ -1035,7 +1200,7 @@ function updateLabels() {
   for (const b of BODIES) {
     const el = b.label;
     const dist = b.rel.length();
-    let vis = show && b.rel.dot(fwd) > 0;
+    let vis = show && b.rel.dot(fwd) > 0 && (!inSky || (b !== B.earth && b.rel.dot(skyState.up) >= 0));
     if (vis) {
       proj.copy(b.rel).project(camera);
       vis = Math.abs(proj.x) < 1.2 && Math.abs(proj.y) < 1.2;
@@ -1043,7 +1208,7 @@ function updateLabels() {
     if (vis) {
       const dir = b.rel.clone().divideScalar(dist);
       for (const o of BODIES) {
-        if (o === b) continue;
+        if (o === b || (inSky && o === B.earth)) continue;
         const od = o.rel.length();
         if (od >= dist) continue;
         const t = o.rel.dot(dir);
@@ -1060,21 +1225,50 @@ function updateLabels() {
     el.classList.toggle('hidden', !vis);
     if (!vis) continue;
     const rpx = (b.R / dist) * f;
-    const big = rpx > 5;
+    const big = rpx > 5 || (inSky && rpx >= 2);
     el.classList.toggle('big', big);
     el.style.transform = `translate(${x - 7}px, ${y - 9 + (big ? rpx + 10 : 0)}px)`;
   }
   const showStars = constLines.visible;
   for (const s of starLabels) {
-    let vis = showStars && s.dir.dot(fwd) > 0;
+    let vis = showStars && s.dir.dot(fwd) > 0 && (!inSky || (starFade.value > 0 && s.dir.dot(skyState.up) >= 0));
     if (vis) { proj.copy(s.dir).project(camera); vis = Math.abs(proj.x) < 1 && Math.abs(proj.y) < 1; }
     s.el.classList.toggle('hidden', !vis);
-    if (vis) s.el.style.transform = `translate(${(proj.x * 0.5 + 0.5) * W + 6}px, ${(-proj.y * 0.5 + 0.5) * H - 8}px)`;
+    if (vis) {
+      s.el.style.opacity = starFade.value;
+      s.el.style.transform = `translate(${(proj.x * 0.5 + 0.5) * W + 6}px, ${(-proj.y * 0.5 + 0.5) * H - 8}px)`;
+    }
+  }
+  for (const [i, el] of cardinals.entries()) {
+    let vis = inSky && horizontalDirection(i * 90, 0, proj).dot(fwd) > 0;
+    if (vis) {
+      proj.project(camera);
+      vis = Math.abs(proj.x) < 1 && Math.abs(proj.y) < 1;
+    }
+    el.classList.toggle('hidden', !vis);
+    if (vis) el.style.transform = `translate(${(proj.x * 0.5 + 0.5) * W}px, ${(-proj.y * 0.5 + 0.5) * H}px) translate(-50%, 4px)`;
   }
 }
 
 // ---------- 主循环 ----------
 const scaleM = new THREE.Matrix4();
+const jupiterShift = new THREE.Vector3();
+function updateSkyScene(t, inSky) {
+  B.earth.obj.visible = !inSky;
+  ground.visible = inSky;
+  let light = 0;
+  if (inSky) {
+    ground.quaternion.setFromUnitVectors(UP, skyState.up);
+    for (const b of BODIES) skyState.apparent[b.id] = EPH.skyPosition(b.id, t, skyState.observer);
+    light = THREE.MathUtils.smoothstep(skyState.apparent.sun.alt, -18, 0);
+  }
+  starFade.value = 1 - light;
+  skyColor.copy(nightColor).lerp(dayColor, light);
+  scene.background = inSky ? skyColor : null;
+  milky.material.uniforms.intensity.value = 0.55 * starFade.value;
+  constLines.children.forEach((lines) => { lines.material.opacity = 0.45 * starFade.value; });
+  B.sun.glow.material.opacity = inSky ? 0.15 * starFade.value : 1;
+}
 let last = performance.now();
 function frame(now) {
   const dt = Math.min(0.1, (now - last) / 1000); last = now;
@@ -1085,11 +1279,21 @@ function frame(now) {
   }
   if (isLive()) time.ms = Date.now();
   const d = EPH.daysSinceJ2000(time.ms);
-  updateEphemeris();
+  const t = updateEphemeris();
   updateNav(dt);
+  const inSky = nav.mode === 'sky';
+  updateSkyScene(t, inSky);
 
   for (const b of BODIES) {
     b.rel.copy(b.pos).sub(camWorld);
+    if (inSky) {
+      const apparent = skyState.apparent[b.id];
+      if (apparent) {
+        if (b === B.jupiter) jupiterShift.copy(b.rel).negate();
+        horizontalDirection(apparent.az, apparent.alt, b.rel).multiplyScalar(apparent.distance);
+        if (b === B.jupiter) jupiterShift.add(b.rel);
+      } else if (b.parent === 'jupiter') b.rel.add(jupiterShift);
+    }
     b.obj.position.copy(b.rel);
     if (b.id !== 'sun' || true) {
       scaleM.makeScale(b.R, b.R * (1 - (b.flat || 0)), b.R);
@@ -1121,7 +1325,7 @@ function frame(now) {
     if (Date.now() - sunState.at > 900000) loadSdo();
   }
 
-  updateOrbitGeometry(d);
+  if (!inSky) updateOrbitGeometry(d);
   for (const id of ORBIT_IDS) orbitLines[id].position.copy(sunRel);
   moonOrbit.position.copy(B.earth.rel);
   galOrbits.forEach((l) => l.position.copy(B.jupiter.rel));
@@ -1144,13 +1348,11 @@ addEventListener('resize', () => {
   renderer.setSize(innerWidth, innerHeight);
 });
 
-// 初始：环绕链接中的天体或地球
-orbitFromHash();
+restoreFromHash();
 setSpeedExp(0);
-applyOpts();
 requestAnimationFrame(frame);
 
 // 调试/自动化用
-window.__ss = { nav, B, time, flyTo };
+window.__ss = { nav, B, time, flyTo, camera, skyState };
 
 if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js', { scope: './' }).catch(() => {});

@@ -53,6 +53,31 @@ export function orient(id, t) {
   return [ax.ra * 15, ax.dec, ax.spin];
 }
 
+export function earthFixed(t) {
+  const angle = A.SiderealTime(t) * 15 * DEG;
+  const c = Math.cos(angle), s = Math.sin(angle), rot = A.Rotation_EQD_EQJ(t);
+  const axis = (x, y, z) => {
+    const v = A.RotateVector(rot, new A.Vector(x, y, z, t));
+    return eqToEcl([v.x, v.y, v.z]);
+  };
+  return { X: axis(c, s, 0), Y: axis(-s, c, 0), Z: axis(0, 0, 1) };
+}
+
+export function groundObserver(lat, lon) { return new A.Observer(lat, lon, 2); }
+
+export function skyPosition(id, t, observer) {
+  if (!Object.hasOwn(BODY, id) || id === 'earth' || id === 'emb') return null;
+  const eq = A.Equator(BODY[id], t, observer, true, true);
+  const hor = A.Horizon(t, observer, eq.ra, eq.dec, 'normal');
+  return { alt: hor.altitude, az: hor.azimuth, distance: eq.dist * AU };
+}
+
+export function skyRiseSet(id, ms, observer) {
+  if (!Object.hasOwn(BODY, id) || id === 'earth' || id === 'emb') return null;
+  const start = new Date(ms);
+  return [1, -1].map((direction) => A.SearchRiseSet(BODY[id], observer, direction, start, 366, observer.height)?.date.getTime() ?? null);
+}
+
 export function state(ms) {
   const t = A.MakeTime(new Date(ms));
   const P = { sun: [0, 0, 0] };
