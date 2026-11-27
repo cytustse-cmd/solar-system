@@ -1047,7 +1047,10 @@ $('speedRange').addEventListener('input', (e) => setSpeedExp(+e.target.value));
 $('tSlower').addEventListener('click', () => { time.rateIdx = Math.max(0, time.rateIdx - 1); time.paused = false; });
 $('tFaster').addEventListener('click', () => { time.rateIdx = Math.min(RATES.length - 1, time.rateIdx + 1); time.paused = false; });
 $('tPause').addEventListener('click', () => { time.paused = !time.paused; });
-$('tNow').addEventListener('click', () => { time.ms = Date.now(); time.rateIdx = 7; time.paused = false; });
+$('tNow').addEventListener('click', () => {
+  time.ms = Date.now(); time.rateIdx = 7; time.paused = false;
+  refreshOpenEvents();
+});
 
 const dateDialog = $('dateDialog'), dateInput = $('dateInput');
 const minTime = Date.UTC(1800, 0, 1), maxTime = Date.UTC(2101, 0, 1) - 1000;
@@ -1072,6 +1075,7 @@ dateDialog.querySelector('form').addEventListener('submit', () => {
   const ms = new Date(dateInput.value).getTime();
   if (ms < minTime || ms > maxTime) time.ms = clampTime(ms);
 });
+dateDialog.addEventListener('close', refreshOpenEvents);
 
 function orbitDirection(param) {
   const parts = param?.split(',');
@@ -1121,6 +1125,7 @@ function restoreFromHash() {
       if (!issState.tle) issState.restoreOrbit = { direction };
     } else setOrbit(b, direction);
   }
+  refreshOpenEvents();
 }
 addEventListener('hashchange', restoreFromHash);
 
@@ -1234,6 +1239,9 @@ function updateIssSkyInfo(info) {
   info.innerHTML = `${position}<br>可见过境（本地时间）<br>开始 ${dtf.format(pass.start)} · ${direction} ${Math.round(pass.az)}°<br>最高 ${pass.maxAlt.toFixed(1)}°<br>结束 ${dtf.format(pass.end)}`;
 }
 
+function refreshOpenEvents() {
+  if (!eventsPanel.classList.contains('hidden')) renderEvents();
+}
 function renderEvents() {
   eventsPanel.innerHTML = '<h3>天象日历</h3><p class="muted">从当前模拟时间起 · 本地时间</p>';
   let events;
