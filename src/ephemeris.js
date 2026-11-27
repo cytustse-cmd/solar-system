@@ -125,23 +125,42 @@ const SEASONS = [
   ['dec_solstice', '冬至', '太阳直射位置最偏南'],
 ];
 
+function surfaceUmbra(t) {
+  // 与 Astronomy Engine 的 GeoidIntersect 一致：将地球椭球拉伸成球后求日侧交点。
+  const rot = A.Rotation_EQJ_EQD(t);
+  const m = A.RotateVector(rot, A.GeoMoon(t)), s = A.RotateVector(rot, A.GeoVector(A.Body.Sun, t, true));
+  const flattening = 0.996647180302104;
+  const x = m.x - s.x, y = m.y - s.y, z = (m.z - s.z) / flattening, mz = m.z / flattening;
+  const norm = Math.hypot(x, y, z);
+  const along = -(m.x * x + m.y * y + mz * z) / norm;
+  const miss = Math.hypot(m.x + along * x / norm, m.y + along * y / norm, mz + along * z / norm);
+  const radicand = (6378.1366 / AU) ** 2 - miss ** 2;
+  if (radicand < 0) return null;
+  const fraction = (along - Math.sqrt(radicand)) / norm;
+  return 1736 - (695700 - 1736) * fraction;
+}
+
 function solarKind({ kind, peak }) {
   if (kind === 'partial') return '日偏食';
-  let total = false, annular = false;
-  for (let minutes = -180; minutes <= 180; minutes += 2) {
-    const t = peak.AddDays(minutes / 1440);
-    const m = A.GeoMoon(t), s = A.GeoVector(A.Body.Sun, t, true);
-    const x = m.x - s.x, y = m.y - s.y, z = m.z - s.z;
-    const dist = Math.hypot(x, y, z);
-    const along = -(m.x * x + m.y * y + m.z * z) / dist;
-    const miss = Math.hypot(m.x + along * x / dist, m.y + along * y / dist, m.z + along * z / dist) * AU;
-    if (miss >= 6371) continue;
-    const surface = along * AU - Math.sqrt(6371 ** 2 - miss ** 2);
-    const umbra = 1736 - (695700 - 1736) * surface / (dist * AU);
-    if (umbra > 0) total = true; else annular = true;
-    if (total && annular) return '日全环食';
+  const fallback = kind === 'total' ? '日全食' : '日环食';
+  const center = surfaceUmbra(peak);
+  if (center === null) return fallback;
+  const umbra = (minutes) => surfaceUmbra(peak.AddDays(minutes / 1440));
+  for (const sign of [-1, 1]) {
+    let inside = 0, outside = 180, edge = center;
+    // 二分定位中心线与地球相切的位置，避免错过两端极短的环食阶段。
+    while (outside - inside > 1e-6) {
+      const mid = (inside + outside) / 2;
+      const radius = umbra(sign * mid);
+      if (radius === null) outside = mid;
+      else { inside = mid; edge = radius; }
+    }
+    if ((edge > 0) !== (center > 0)) return '混合食';
+    for (let minute = 1; minute < inside; minute++) {
+      if ((umbra(sign * minute) > 0) !== (center > 0)) return '混合食';
+    }
   }
-  return kind === 'total' ? '日全食' : '日环食';
+  return fallback;
 }
 
 export function upcomingEvents(ms, end, limit = 12) {
