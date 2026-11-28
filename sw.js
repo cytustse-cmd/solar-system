@@ -1,5 +1,5 @@
 const PREFIX = 'solar-system-';
-const CACHE = PREFIX + 'v3';
+const CACHE = PREFIX + 'v2';
 const scope = new URL(self.registration.scope);
 const SHELL = [
   './', './index.html', './style.css', './src/main.js', './src/ephemeris.js', './src/iss.js', './src/milkyway.js', './src/earth-tiles.js',
@@ -9,7 +9,7 @@ const SHELL = [
 
 self.addEventListener('install', (event) => event.waitUntil((async () => {
   const cache = await caches.open(CACHE);
-  await cache.addAll(SHELL);
+  await cache.addAll(SHELL.map((path) => new Request(new URL(path, scope), { cache: 'reload' })));
   await self.skipWaiting();
 })()));
 self.addEventListener('activate', (event) => event.waitUntil((async () => {
