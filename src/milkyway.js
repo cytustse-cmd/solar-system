@@ -40,6 +40,11 @@ void main() {
   vec2 uv = vec2(0.5 - l / 6.28318530718, 0.5 + b / 3.14159265359);
 #endif
   vec3 c = texture2D(map, uv).rgb;
+#ifdef SHARP_TILE
+  float luminance = dot(c, vec3(0.2126, 0.7152, 0.0722));
+  float exposure = mix(0.56, 0.81, smoothstep(0.025, 0.20, luminance));
+  c = mix(vec3(luminance), c, 0.24) * exposure;
+#endif
   c = max(c - 0.015, 0.0) * intensity;
   gl_FragColor = vec4(c + tint, 1.0);
   #include <colorspace_fragment>
