@@ -639,7 +639,8 @@ async function loadAsteroids() {
   } catch (error) {
     if (last) return { epoch: Number(last.headers.get('x-asteroid-epoch')), buf: await last.arrayBuffer() };
     // The pre-manifest service worker cached the original binary at a fixed epoch.
-    const legacy = await globalThis.caches?.match(url.href, { cacheName: 'solar-system-v2' }).catch(() => null);
+    const legacy = await globalThis.caches?.match(url.href, { cacheName: 'solar-system-v3' }).catch(() => null)
+      ?? await globalThis.caches?.match(url.href, { cacheName: 'solar-system-v2' }).catch(() => null);
     if (legacy) return { epoch: 2461200.5, buf: await legacy.arrayBuffer() };
     throw error;
   }
@@ -1548,7 +1549,7 @@ function frame(now) {
   B.earth.mat.uniforms.cloudFade.value = cloudFade;
   B.earth.clouds.visible = cloudFade > 0;
   earthTiles.update(now, camera, B.earth, renderer.domElement.height, loaded && !inSky);
-  earthCredit.classList.toggle('hidden', earthTiles.uniforms.earthTileCount.value === 0);
+  earthCredit?.classList.toggle('hidden', earthTiles.uniforms.earthTileCount.value === 0);
   if (loaded) updateMilkyTiles(camera);
   renderer.render(scene, camera);
   updateLabels();
