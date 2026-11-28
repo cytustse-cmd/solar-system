@@ -8,6 +8,25 @@ const faces = {
   pz: (u, v) => [u, v, 1], nz: (u, v) => [u, v, -1],
 };
 
+function intersectsFrustum(polygon, frustum) {
+  for (const plane of frustum.planes) {
+    const distances = polygon.map((point) => plane.distanceToPoint(point));
+    if (distances.every((distance) => distance >= 0)) continue;
+    if (distances.every((distance) => distance <= 0)) return false;
+    const clipped = [];
+    for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i++) {
+      const a = distances[j], b = distances[i];
+      if ((a < 0 && b > 0) || (a > 0 && b < 0)) {
+        clipped.push(polygon[j].clone().lerp(polygon[i], a / (a - b)));
+      }
+      if (b >= 0) clipped.push(polygon[i]);
+    }
+    if (clipped.length < 3) return false;
+    polygon = clipped;
+  }
+  return true;
+}
+
 export function createMilkyWay(legacy, galFromScene, tint, radius, isTouch, maxAniso) {
   const background = new THREE.Group();
   const intensity = { value: 0.55 };
@@ -79,7 +98,8 @@ void main() {
         mesh.frustumCulled = false;
         mesh.visible = false;
         background.add(mesh);
-        tiles.push({ name: `${face}-${row}${col}`, corners, center, mesh, wanted: false, pending: false, failed: false, used: 0 });
+        const polygon = [corners[0], corners[1], corners[3], corners[2]];
+        tiles.push({ name: `${face}-${row}${col}`, polygon, center, mesh, wanted: false, pending: false, failed: false, used: 0 });
       }
     }
   }
@@ -116,7 +136,7 @@ void main() {
     frustum.setFromProjectionMatrix(projection.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse));
     forward.set(0, 0, -1).applyQuaternion(camera.quaternion);
     const visible = tiles.filter((tile) => background.visible && intensity.value > 0 &&
-      frustum.planes.every((plane) => tile.corners.some((corner) => plane.distanceToPoint(corner) >= 0)));
+      intersectsFrustum(tile.polygon, frustum));
     visible.sort((a, b) => b.center.dot(forward) - a.center.dot(forward));
     const wanted = visible.slice(0, capacity);
     const resident = [];
