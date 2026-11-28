@@ -115,7 +115,7 @@ function selectTiles(frustum, eye, look, focal, limit) {
         continue;
       }
     }
-    if (tile.z >= MIN_LEVEL) settled.push(tile);
+    settled.push(tile);
   }
   return settled.sort((a, b) => b.priority - a.priority);
 }
