@@ -3,7 +3,7 @@ const CACHE = PREFIX + 'v2';
 const scope = new URL(self.registration.scope);
 const SHELL = [
   './', './index.html', './style.css', './src/main.js', './src/ephemeris.js', './src/iss.js',
-  './vendor/three.module.js', './vendor/astronomy.js', './vendor/satellite.es.js', './data/sky.json', './data/asteroids.bin',
+  './vendor/three.module.js', './vendor/astronomy.js', './vendor/satellite.es.js', './data/sky.json',
 ];
 
 self.addEventListener('install', (event) => event.waitUntil((async () => {
@@ -22,7 +22,8 @@ self.addEventListener('fetch', (event) => {
   const url = new URL(request.url);
   if (request.method !== 'GET' || url.origin !== scope.origin || !url.pathname.startsWith(scope.pathname)) return;
   const path = url.pathname.slice(scope.pathname.length);
-  if (path.startsWith('live/')) return;
+  if (path.startsWith('live/') || path === 'data/asteroids.json'
+    || (path === 'data/asteroids.bin' && url.searchParams.has('v'))) return;
   const cacheFirst = /^(textures|data|vendor)\//.test(path);
   if (!cacheFirst && request.mode !== 'navigate' && !/\.(html|js|css)$/.test(path)) return;
 

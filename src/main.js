@@ -45,6 +45,14 @@ function tex(file, srgb = true) {
 }
 
 // ---------- 天体定义 ----------
+const minorMoon = (id, parent, name, R, color) => ({
+  id, parent, name, R, color, view: 5, soi: R * 25, group: '卫星', small: true,
+  facts: `半径 ${R.toLocaleString('zh-CN')} km · 平均轨道（位置近似，仅供示意）`,
+});
+const comet = (id, name, R) => ({
+  id, name, R, color: '#b4d5c9', view: 9, soi: R * 25, group: '彗星', small: true, comet: true,
+  facts: '彗核 · 二体近似轨道（远离历元时误差增大）',
+});
 const BODIES = [
   { id: 'sun', name: '太阳', R: 695700, view: 5, color: '#ffd27a', soi: Infinity, group: '恒星',
     facts: '半径 695,700 km · 自转约 25.4 天 · 表面温度约 5,772 K' },
@@ -76,10 +84,31 @@ const BODIES = [
     facts: '赤道半径 24,764 km · 一天 16 时 6 分 · 一年 164.8 年' },
   { id: 'pluto', name: '冥王星', R: 1188.3, tex: 'plutomap1k.jpg', view: 4, color: '#d8c3a8', soi: 3.1e6, group: '矮行星',
     facts: '半径 1,188 km · 一天 6.39 地球日 · 一年 248 年' },
+  minorMoon('phobos', 'mars', '火卫一', 11.08, '#8b7971'),
+  minorMoon('deimos', 'mars', '火卫二', 6.2, '#8f8276'),
+  minorMoon('mimas', 'saturn', '土卫一', 198.2, '#c3c2bd'),
+  minorMoon('enceladus', 'saturn', '土卫二', 252.1, '#eceeef'),
+  minorMoon('tethys', 'saturn', '土卫三', 531.1, '#d2d0cb'),
+  minorMoon('dione', 'saturn', '土卫四', 561.4, '#cfcbc2'),
+  minorMoon('rhea', 'saturn', '土卫五', 763.8, '#cbc8c1'),
+  minorMoon('titan', 'saturn', '土卫六（泰坦）', 2574.7, '#d2a05b'),
+  minorMoon('iapetus', 'saturn', '土卫八', 734.5, '#ada091'),
+  minorMoon('miranda', 'uranus', '天卫五', 235.8, '#b0b0af'),
+  minorMoon('ariel', 'uranus', '天卫一', 578.9, '#c0beba'),
+  minorMoon('umbriel', 'uranus', '天卫二', 584.7, '#817b76'),
+  minorMoon('titania', 'uranus', '天卫三', 788.9, '#b4a593'),
+  minorMoon('oberon', 'uranus', '天卫四', 761.4, '#a68e7c'),
+  minorMoon('triton', 'neptune', '海卫一', 1353.4, '#d1c1b2'),
+  minorMoon('charon', 'pluto', '冥卫一（卡戎）', 606, '#b8b3ac'),
+  comet('halley', '1P 哈雷彗星', 5.5),
+  comet('encke', '2P 恩克彗星', 2.4),
+  comet('churyumov', '67P 丘留莫夫－格拉西缅科彗星', 2),
+  comet('ponsBrooks', '12P 庞斯－布鲁克斯彗星', 17),
   { id: 'iss', name: '国际空间站', R: 0.05, view: 6000, color: '#7df4ff', parent: 'earth', group: '航天器', available: false,
     facts: 'NORAD 25544 · CelesTrak 双行轨道根数 / SGP4' },
 ];
 const B = Object.fromEntries(BODIES.map((b) => [b.id, b]));
+const COMET_BODIES = BODIES.filter((b) => b.comet);
 for (const b of BODIES) { b.pos = new THREE.Vector3(); b.rel = new THREE.Vector3(); b.basis = new THREE.Matrix4(); b.tilt = new THREE.Matrix4(); }
 const issState = { tle: null, fetchedAt: -Infinity, trackAt: -Infinity, restoreOrbit: null };
 
@@ -142,6 +171,7 @@ function noiseTexture([base, light, dark]) {
 
 // ---------- 网格 ----------
 const sphereGeo = new THREE.SphereGeometry(1, 192, 96);
+const smallSphereGeo = new THREE.SphereGeometry(1, 32, 16);
 const sunLight = new THREE.PointLight(0xffffff, 3.3, 0, 0);
 scene.add(sunLight);
 scene.add(new THREE.AmbientLight(0xffffff, 0.035));
@@ -404,6 +434,15 @@ function moonShadowMaterial(shader) {
     .replace('#include <opaque_fragment>', 'outgoingLight *= mix(vec3(0.075, 0.014, 0.006), vec3(1.0), sunlight());\n#include <opaque_fragment>');
 }
 
+const tailGeo = new THREE.CylinderGeometry(1, 0.02, 1, 8, 1, true).translate(0, 0.5, 0);
+const tailMat = new THREE.ShaderMaterial({
+  transparent: true, blending: THREE.AdditiveBlending, side: THREE.DoubleSide,
+  depthWrite: false, forceSinglePass: true,
+  vertexShader: `varying float along;
+    void main() { along = position.y; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`,
+  fragmentShader: `varying float along;
+    void main() { gl_FragColor = vec4(0.42, 0.74, 0.81, 0.14 * pow(1.0 - along, 2.0)); }`,
+});
 for (const b of BODIES) {
   b.obj = new THREE.Group();
   scene.add(b.obj);
@@ -419,8 +458,16 @@ for (const b of BODIES) {
     mesh = new THREE.Mesh(sphereGeo, new THREE.MeshBasicMaterial({ color: b.color }));
     b.marker = new THREE.Sprite(new THREE.SpriteMaterial({ map: glowTexture(), color: b.color, depthWrite: false }));
     b.obj.add(b.marker);
+  } else if (b.small) {
+    mesh = new THREE.Mesh(smallSphereGeo, new THREE.MeshPhongMaterial({ color: b.color, shininess: 4, specular: 0x0a0a0a }));
+    if (b.comet) {
+      b.tail = new THREE.Mesh(tailGeo, tailMat);
+      b.tail.visible = false;
+      b.obj.add(b.tail);
+    }
   } else {
     const map = b.tex ? tex(b.tex) : noiseTexture(b.noise);
+    if (b.id === 'jupiter') map.wrapS = THREE.RepeatWrapping;
     mesh = new THREE.Mesh(sphereGeo, new THREE.MeshPhongMaterial({ map, shininess: 4, specular: 0x0a0a0a }));
     if (b.id === 'moon') mesh.material.onBeforeCompile = moonShadowMaterial;
   }
@@ -538,7 +585,7 @@ manager.itemStart('sky'); skyLoad.finally(() => manager.itemEnd('sky'));
 
 // ---------- 小行星带（示意，按开普勒运动） ----------
 // 真实小行星：NASA JPL SBDB 中绝对星等 H<15 的全部小行星（含近地、主带、特洛伊、柯伊伯带），二体开普勒外推
-const AST_EPOCH = 2461200.5 - 2451545.0;
+let asteroidEpoch = 0;
 const belt = new THREE.Points(new THREE.BufferGeometry(), new THREE.ShaderMaterial({
   uniforms: { dt: { value: 0 }, pr: { value: renderer.getPixelRatio() } },
   vertexShader: /* glsl */`
@@ -570,7 +617,43 @@ void main() {
 }));
 belt.frustumCulled = false;
 scene.add(belt);
-fetch('data/asteroids.bin').then((r) => r.arrayBuffer()).then((buf) => {
+
+async function loadAsteroids() {
+  const url = new URL('data/asteroids.bin', document.baseURI);
+  // Store epoch and binary in one cache entry so interrupted updates cannot mismatch them.
+  const cache = await globalThis.caches?.open('asteroid-catalog-v1').catch(() => null);
+  const last = await cache?.match(url.href).catch(() => null);
+  try {
+    const response = await fetch('data/asteroids.json', { cache: 'no-cache' });
+    if (!response.ok) throw new Error('Asteroid manifest unavailable');
+    const { epoch, rows, sha256 } = await response.json();
+    if (!(epoch >= 2400000 && epoch <= 2500000 && Number.isFinite(epoch)
+      && Number.isInteger(rows) && rows > 0 && /^[A-Za-z0-9+/]{43}=$/.test(sha256))) {
+      throw new Error('Invalid asteroid manifest');
+    }
+    if (last?.headers.get('x-asteroid-version') === sha256 && Number(last.headers.get('x-asteroid-epoch')) === epoch) {
+      return { epoch, buf: await last.arrayBuffer() };
+    }
+    const key = url.href;
+    url.searchParams.set('v', sha256);
+    const binary = await fetch(url, { integrity: 'sha256-' + sha256 });
+    if (!binary.ok) throw new Error('Asteroid binary unavailable');
+    const buf = await binary.arrayBuffer();
+    if (buf.byteLength !== rows * 24) throw new Error('Invalid asteroid binary size');
+    await cache?.put(key, new Response(buf, {
+      headers: { 'x-asteroid-epoch': epoch, 'x-asteroid-version': sha256 },
+    })).catch(() => {});
+    return { epoch, buf };
+  } catch (error) {
+    if (last) return { epoch: Number(last.headers.get('x-asteroid-epoch')), buf: await last.arrayBuffer() };
+    // The pre-manifest service worker cached the original binary at a fixed epoch.
+    const legacy = await globalThis.caches?.match(url.href, { cacheName: 'solar-system-v2' }).catch(() => null);
+    if (legacy) return { epoch: 2461200.5, buf: await legacy.arrayBuffer() };
+    throw error;
+  }
+}
+
+loadAsteroids().then(({ epoch, buf }) => {
   const all = new Float32Array(buf), N = Math.min(all.length / 6, isTouch ? 30000 : 85000);
   const el1 = new Float32Array(N * 4), el2 = new Float32Array(N * 2);
   for (let i = 0; i < N; i++) {
@@ -581,42 +664,36 @@ fetch('data/asteroids.bin').then((r) => r.arrayBuffer()).then((buf) => {
   geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(N * 3), 3));
   geo.setAttribute('el1', new THREE.BufferAttribute(el1, 4));
   geo.setAttribute('el2', new THREE.BufferAttribute(el2, 2));
-});
+  asteroidEpoch = epoch - 2451545;
+}).catch(() => {});
 
 // ---------- 轨道线 ----------
 const ORBIT_IDS = ['mercury', 'venus', 'emb', 'mars', 'jupiter', 'saturn', 'uranus', 'neptune', 'pluto'];
+const GAL = EPH.GAL;
 const orbitGroup = new THREE.Group();
 scene.add(orbitGroup);
-const orbitLines = {};
 function lineMat(color, op = 0.38) { return new THREE.LineBasicMaterial({ color, transparent: true, opacity: op, depthWrite: false }); }
-for (const id of ORBIT_IDS) {
+function makeTrack(id, n, opacity) {
   const b = B[id === 'emb' ? 'earth' : id];
-  const geo = new THREE.BufferGeometry();
-  geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(721 * 3), 3));
-  const l = new THREE.Line(geo, lineMat(b.color));
-  l.frustumCulled = false; l.userData.body = b; l.userData.baseOp = 0.38;
-  orbitGroup.add(l); orbitLines[id] = l;
+  const geo = new THREE.BufferGeometry().setAttribute('position', new THREE.BufferAttribute(new Float32Array((n + 1) * 3), 3));
+  const line = new THREE.Line(geo, lineMat(id === 'moon' ? '#cfcfcf' : b.color, opacity));
+  line.frustumCulled = false;
+  orbitGroup.add(line);
+  return { id, b, line, n, opacity, at: -Infinity };
 }
-const moonOrbit = new THREE.Line(new THREE.BufferGeometry().setAttribute('position', new THREE.BufferAttribute(new Float32Array(361 * 3), 3)), lineMat('#cfcfcf', 0.3));
-moonOrbit.frustumCulled = false; moonOrbit.userData.body = B.moon; moonOrbit.userData.baseOp = 0.3; orbitGroup.add(moonOrbit);
-const GAL = ['io', 'europa', 'ganymede', 'callisto'];
-const galOrbits = GAL.map((id) => {
-  const l = new THREE.Line(new THREE.BufferGeometry().setAttribute('position', new THREE.BufferAttribute(new Float32Array(181 * 3), 3)), lineMat(B[id].color, 0.3));
-  l.frustumCulled = false; l.userData.body = B[id]; l.userData.baseOp = 0.3;
-  orbitGroup.add(l); return l;
-});
 const ISS_SAMPLES = 90;
 const issOrbit = new THREE.Line(new THREE.BufferGeometry().setAttribute('position', new THREE.BufferAttribute(new Float32Array((ISS_SAMPLES + 1) * 3), 3)), lineMat(B.iss.color, 0.7));
 issOrbit.frustumCulled = false;
 orbitGroup.add(issOrbit);
 
-// 轨道线：以当前时刻为中心、按同一星历采样一个周期，保证天体恰好位于轨道线上
+// 轨道线：动态轨道以当前时刻为中心采样，彗星二体椭圆只需生成一次。
 const TRACKS = [
-  ...ORBIT_IDS.map((id) => ({ id, line: orbitLines[id], n: 720 })),
-  { id: 'moon', line: moonOrbit, n: 360 },
-  ...GAL.map((id, i) => ({ id, line: galOrbits[i], n: 180 })),
+  ...ORBIT_IDS.map((id) => makeTrack(id, 720, 0.38)),
+  makeTrack('moon', 360, 0.3),
+  ...GAL.map((id) => makeTrack(id, 180, 0.3)),
+  ...BODIES.filter((b) => b.small && b.parent).map((b) => makeTrack(b.id, 120, 0.25)),
+  ...COMET_BODIES.map((b) => makeTrack(b.id, 720, 0.34)),
 ];
-for (const t of TRACKS) t.at = -1e18;
 function refreshTrack(t, d) {
   t.at = d;
   const pts = EPH.track(t.id, time.ms, t.n), arr = t.line.geometry.attributes.position;
@@ -627,6 +704,7 @@ const tmpV = new THREE.Vector3();
 function updateOrbitGeometry(d, all = false) {
   let worst = null, wv = 0.01;
   for (const t of TRACKS) {
+    if (t.b.comet && Number.isFinite(t.at)) continue;
     const v = Math.abs(d - t.at) / EPH.PERIOD[t.id];
     if (all && v > 0.01) refreshTrack(t, d);
     else if (v > wv) { wv = v; worst = t; }
@@ -673,7 +751,8 @@ function setBasis(b, ax, W = true) {
   b.basis.makeBasis(vX, vZ, vY.negate());
 }
 function updateEphemeris() {
-  const { t, P, gal } = EPH.state(time.ms);
+  const apparent = nav.mode === 'sky' || $('optApparent').checked;
+  const { t, P, gal, cometDistance, jupiterTime } = EPH.state(time.ms, apparent);
   for (const b of BODIES) {
     if (b.id === 'earth' && nav.mode === 'sky') { setBasis(b, EPH.earthFixed(t)); continue; }
     const o = EPH.orient(b.id, t);
@@ -683,6 +762,9 @@ function updateEphemeris() {
     }
   }
   const jo = EPH.orient('jupiter', t);
+  // The GRS is centered at x≈1495 in the 4096 px map. West longitude = 360° × (0.5 − u).
+  const grsWest = EPH.jupiterGrsLongitudeIII(jupiterTime, jo[2]);
+  B.jupiter.mesh.material.map.offset.x = 1495 / 4096 - (0.5 - grsWest / 360);
   const jZ = EPH.axesEcl(jo[0], jo[1], 0).Z;
   GAL.forEach((id, i) => {
     // 潮汐锁定：本初子午线指向木星
@@ -695,11 +777,12 @@ function updateEphemeris() {
   const iss = ISS.position(issState.tle, t);
   B.iss.available = !!iss;
   if (iss) toScene(iss, B.iss.pos).add(B.earth.pos);
-  toScene(EPH.eclipseSun(t), earthEclipse.eclipseSun.value);
-  earthEclipse.eclipseOccluder.value.copy(B.moon.pos).sub(B.earth.pos);
+  if (apparent) earthEclipse.eclipseSun.value.copy(B.sun.pos).sub(B.earth.pos);
+  else toScene(EPH.eclipseSun(t), earthEclipse.eclipseSun.value);
+  toScene(EPH.moonGeo(t), earthEclipse.eclipseOccluder.value);
   moonEclipse.eclipseSun.value.copy(earthEclipse.eclipseSun.value).sub(earthEclipse.eclipseOccluder.value);
   moonEclipse.eclipseOccluder.value.copy(earthEclipse.eclipseOccluder.value).negate();
-  return t;
+  return { t, P, cometDistance };
 }
 
 // ---------- 时间 ----------
@@ -1100,6 +1183,7 @@ function restoreFromHash() {
   time.ms = Number.isFinite(ms) ? clampTime(ms) : Date.now();
   time.rateIdx = /^\d+$/.test(rate) && Number(rate) < RATES.length ? Number(rate) : 7;
   time.paused = params.get('p') === '1';
+  $('optApparent').checked = params.get('ap') === '1';
   const id = params.get('b');
   const b = Object.hasOwn(B, id) ? B[id] : B.earth;
   issState.restoreOrbit = null;
@@ -1145,6 +1229,7 @@ function viewHash() {
       params.set('o', `${(sph.theta / DEG).toFixed(3)},${(90 - sph.phi / DEG).toFixed(3)}`);
     }
   }
+  if ($('optApparent').checked) params.set('ap', '1');
   if (!isLive()) params.set('t', new Date(time.ms).toISOString());
   if (time.rateIdx !== 7) params.set('r', time.rateIdx);
   if (time.paused) params.set('p', '1');
@@ -1218,7 +1303,8 @@ function updateSkyInfo() {
   const times = events.find?.(ms);
   const format = (t) => t === null ? '一年内无事件' : dtf.format(t);
   info.innerHTML = `高度 ${alt.toFixed(2)}° · 方位 ${az.toFixed(2)}°` +
-    (times ? `<br>升起 ${format(times[0])}<br>落下 ${format(times[1])}<br>时间为设备本地时间` : '<br>暂无升落星历');
+    (times ? `<br>升起 ${format(times[0])}<br>落下 ${format(times[1])}<br>时间为设备本地时间` : '<br>暂无升落星历') +
+    (b.small ? '<br>轨道为近似值，仅供示意' : '');
 }
 
 const ISS_UNAVAILABLE = '位置不可用：缺少有效的空间站轨道数据，或与模拟时间相差超过 14 天。';
@@ -1364,14 +1450,13 @@ function updateLabels() {
 
 // ---------- 主循环 ----------
 const scaleM = new THREE.Matrix4();
-const jupiterShift = new THREE.Vector3();
-function updateSkyScene(t, inSky) {
+function updateSkyScene(t, P, inSky) {
   B.earth.obj.visible = !inSky;
   ground.visible = inSky;
   let light = 0;
   if (inSky) {
     ground.quaternion.setFromUnitVectors(UP, skyState.up);
-    for (const b of BODIES) skyState.apparent[b.id] = EPH.skyPosition(b.id, t, skyState.observer);
+    skyState.apparent = EPH.skyPositions(t, P, skyState.observer);
     light = THREE.MathUtils.smoothstep(skyState.apparent.sun.alt, -18, 0);
   }
   starFade.value = 1 - light;
@@ -1390,10 +1475,11 @@ function frame(now) {
   }
   if (isLive()) time.ms = Date.now();
   const d = EPH.daysSinceJ2000(time.ms);
-  const t = updateEphemeris();
+  const { t, P, cometDistance } = updateEphemeris();
   updateNav(dt);
   const inSky = nav.mode === 'sky';
-  updateSkyScene(t, inSky);
+  updateSkyScene(t, P, inSky);
+  const focal = innerHeight / (2 * Math.tan(camera.fov * DEG / 2));
 
   for (const b of BODIES) {
     if (b === B.iss) b.obj.visible = b.available;
@@ -1401,19 +1487,24 @@ function frame(now) {
     b.rel.copy(b.pos).sub(camWorld);
     if (inSky) {
       const apparent = skyState.apparent[b.id];
-      if (apparent) {
-        if (b === B.jupiter) jupiterShift.copy(b.rel).negate();
-        horizontalDirection(apparent.az, apparent.alt, b.rel).multiplyScalar(apparent.distance);
-        if (b === B.jupiter) jupiterShift.add(b.rel);
-      } else if (b.parent === 'jupiter') b.rel.add(jupiterShift);
+      if (apparent) horizontalDirection(apparent.az, apparent.alt, b.rel).multiplyScalar(apparent.distance);
     }
     b.obj.position.copy(b.rel);
+    if (b.small) b.mesh.visible = b.rel.lengthSq() <= (2 * b.R * focal) ** 2;
     if (b.id !== 'sun' || true) {
       scaleM.makeScale(b.R, b.R * (1 - (b.flat || 0)), b.R);
       b.mesh.matrix.copy(b.basis).multiply(scaleM);
     }
   }
   const sunRel = B.sun.rel;
+  for (const b of COMET_BODIES) {
+    const distance = cometDistance[b.id] / EPH.AU;
+    b.tail.visible = distance < 3;
+    if (!b.tail.visible) continue;
+    const length = 5e6 * ((3 - distance) / (3 + distance)) ** 2 / Math.max(0.25, distance);
+    b.tail.quaternion.setFromUnitVectors(UP, tmpV.copy(b.rel).sub(sunRel).normalize());
+    b.tail.scale.set(length * 0.055, length, length * 0.055);
+  }
   sunLight.position.copy(sunRel);
   const sd = sunRel.length();
   B.iss.marker.scale.setScalar(2 * B.iss.rel.length() * Math.tan(camera.fov * DEG / 2) * 24 / innerHeight);
@@ -1445,17 +1536,21 @@ function frame(now) {
 
   if (!inSky) updateOrbitGeometry(d);
   if (orbitGroup.visible) updateIssOrbit(t);
-  for (const id of ORBIT_IDS) orbitLines[id].position.copy(sunRel);
-  moonOrbit.position.copy(B.earth.rel);
-  galOrbits.forEach((l) => l.position.copy(B.jupiter.rel));
-  for (const l of orbitGroup.children) {
-    if (l === issOrbit) continue;
-    const b = l.userData.body;
-    const r = b.rel.length() / b.R;
-    l.material.opacity = l.userData.baseOp * THREE.MathUtils.clamp((r - 8) / 60, 0, 1);
+  if (orbitGroup.visible) {
+    const geometric = $('optApparent').checked ? EPH.state(time.ms).P : null;
+    for (const { b, line, opacity } of TRACKS) {
+      const parent = b.parent && B[b.parent];
+      if (geometric) {
+        line.position.copy(b.rel).sub(toScene(geometric[b.id], tmpV));
+        if (parent) line.position.add(toScene(geometric[parent.id], tmpV));
+      } else if (parent) line.position.copy(parent.rel);
+      else line.position.copy(camWorld).negate();
+      line.visible = !b.small || !parent || parent.rel.lengthSq() < b.pos.distanceToSquared(parent.pos) * focal ** 2;
+      if (line.visible) line.material.opacity = opacity * THREE.MathUtils.clamp((b.rel.length() / b.R - 8) / 60, 0, 1);
+    }
   }
-  belt.position.copy(sunRel);
-  belt.material.uniforms.dt.value = d - AST_EPOCH;
+  belt.position.copy(camWorld).negate();
+  belt.material.uniforms.dt.value = d - asteroidEpoch;
 
   renderer.render(scene, camera);
   updateLabels();

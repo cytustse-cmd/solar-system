@@ -8,3 +8,7 @@
 - 恒星：依巴谷星表；纹理：NASA Blue Marble、Solar System Scope（CC BY 4.0）
 
 本地运行：`python3 server.py 8080`，然后打开 http://localhost:8080/
+
+小行星星表可用 `python3 scripts/build_asteroids.py` 重建。脚本使用 JPL SBDB 当前提供的瞬时轨道根数及其历元（不一定是下载当天）；没有完整椭圆轨道根数的对象不绘制。浏览器在线检查版本，离线使用上一次成功加载的星表。
+
+GitHub Actions 每周刷新一次，也可在 Actions 中手动运行。仅在星表或历元清单变化时提交到 `main`。`GITHUB_TOKEN` 推送不会触发 Pages 的推送工作流；Pages 每 15 分钟的定时任务会部署新数据。
