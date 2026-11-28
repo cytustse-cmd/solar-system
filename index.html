@@ -13,6 +13,7 @@
 <body>
 <div id="app"></div>
 <div id="labels"></div>
+<a id="earthCredit" class="hidden" href="https://cloudless.eox.at/" target="_blank" rel="noopener">EOxCloudless by EOX IT Services GmbH · Contains modified Copernicus Sentinel data 2016</a>
 
 <div id="loading"><div class="ltitle">实时太阳系</div><div class="lbar"><div id="lprog"></div></div><div id="ltext">正在加载星图与行星纹理…</div></div>
 
@@ -91,6 +92,7 @@
   <p>数字键 0–9：太阳、水星…冥王星。</p>
   <p class="muted">行星位置按 VSOP87 / TOP2013 理论、月球按 ELP/MPP02、木卫按 L1.2 理论、自转按 IAU 2015 参数与 IAU2000B 章动实时计算（与 NASA JPL Horizons 对比角误差约 1–15 角秒）；恒星来自依巴谷星表（亮于 6 等）；地表为当月 NASA Blue Marble，云层为每 3 小时更新的实时全球云图（EUMETSAT/NOAA，经 matteason/live-cloud-maps），太阳朝向地球的一面为 NASA SDO/HMI 最新图像（实时黑子）；其余行星纹理来自 Solar System Scope（CC BY 4.0）；小行星为 NASA JPL 小天体数据库中 H&lt;15 的约 8.5 万颗真实天体。</p>
   <p class="muted">银河高清图：<a href="https://sci.esa.int/web/gaia/-/the-colour-of-the-sky-from-gaia-s-early-data-release-3-equirectangular-projection">ESA/Gaia/DPAC</a>，致谢 A. Moitinho（<a href="https://creativecommons.org/licenses/by-sa/3.0/igo/">CC BY-SA 3.0 IGO</a>，已重新投影、调亮度并切片）；加载占位图：<a href="https://www.eso.org/public/images/eso0932a/">ESO/S. Brunier</a>。</p>
+  <p class="muted">地球卫星图：<a href="https://cloudless.eox.at/">EOxCloudless</a> by EOX IT Services GmbH (Contains modified Copernicus Sentinel data 2016)，<a href="https://creativecommons.org/licenses/by/4.0/">CC BY 4.0</a>。靠近地球时按视野加载；低空淡出云层，离线保留 Blue Marble 全球底图。</p>
   <button id="helpClose" class="btn accent">开始漫游</button>
 </div>
 
