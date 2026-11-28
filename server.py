@@ -25,6 +25,8 @@ def fetch(path):
 
 
 class Handler(http.server.SimpleHTTPRequestHandler):
+    extensions_map = {**http.server.SimpleHTTPRequestHandler.extensions_map, '.webp': 'image/webp'}
+
     def __init__(self, *a, **kw):
         super().__init__(*a, directory=ROOT, **kw)
 

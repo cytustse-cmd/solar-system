@@ -2,7 +2,7 @@ const PREFIX = 'solar-system-';
 const CACHE = PREFIX + 'v2';
 const scope = new URL(self.registration.scope);
 const SHELL = [
-  './', './index.html', './style.css', './src/main.js', './src/ephemeris.js', './src/iss.js',
+  './', './index.html', './style.css', './src/main.js', './src/ephemeris.js', './src/iss.js', './src/milkyway.js',
   './vendor/three.module.js', './vendor/astronomy.js', './vendor/satellite.es.js', './data/sky.json',
 ];
 

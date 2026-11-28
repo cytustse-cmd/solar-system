@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import * as EPH from './ephemeris.js';
 import * as ISS from './iss.js';
+import { createMilkyWay } from './milkyway.js';
 
 const DEG = Math.PI / 180;
 const C_KMS = 299792.458;
@@ -490,7 +491,7 @@ ground.visible = false;
 scene.add(ground);
 const starFade = { value: 1 };
 
-// 银河（ESO 全天图，银道坐标等距柱状投影）
+// 银河坐标系
 const eclFromScene = new THREE.Matrix3().set(1, 0, 0, 0, 0, -1, 0, 1, 0);
 const eps = EPH.OBLIQUITY;
 const eqFromEcl = new THREE.Matrix3().set(1, 0, 0, 0, Math.cos(eps), -Math.sin(eps), 0, Math.sin(eps), Math.cos(eps));
@@ -501,23 +502,8 @@ const galFromEq = new THREE.Matrix3().set(
 const galFromScene = galFromEq.clone().multiply(eqFromEcl).multiply(eclFromScene);
 const mwTex = tl.load(texturePath('milkyway.jpg'));
 mwTex.colorSpace = THREE.SRGBColorSpace; mwTex.generateMipmaps = false; mwTex.minFilter = THREE.LinearFilter;
-const milky = new THREE.Mesh(new THREE.SphereGeometry(SKY_R * 1.5, 64, 32), new THREE.ShaderMaterial({
-  uniforms: { map: { value: mwTex }, toGal: { value: galFromScene }, intensity: { value: 0.55 }, tint: { value: skyColor } },
-  vertexShader: `varying vec3 vDir; void main(){ vDir = position; gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0); }`,
-  fragmentShader: `
-uniform sampler2D map; uniform mat3 toGal; uniform float intensity; uniform vec3 tint; varying vec3 vDir;
-void main(){
-  vec3 g = normalize(toGal * normalize(vDir));
-  float l = atan(g.y, g.x); float b = asin(clamp(g.z, -1.0, 1.0));
-  vec2 uv = vec2(0.5 - l / 6.28318530718, 0.5 + b / 3.14159265359);
-  vec3 c = texture2D(map, uv).rgb;
-  c = max(c - 0.015, 0.0) * intensity;
-  gl_FragColor = vec4(c + tint, 1.0);
-  #include <colorspace_fragment>
-}`,
-  side: THREE.BackSide, depthTest: false, depthWrite: false,
-}));
-milky.renderOrder = -20; milky.frustumCulled = false;
+const { background: milky, intensity: milkyIntensity, updateTiles: updateMilkyTiles } =
+  createMilkyWay(mwTex, galFromScene, skyColor, SKY_R, isTouch, maxAniso);
 sky.add(milky);
 
 function bvToColor(bv) {
@@ -1462,7 +1448,7 @@ function updateSkyScene(t, P, inSky) {
   starFade.value = 1 - light;
   skyColor.copy(nightColor).lerp(dayColor, light);
   scene.background = inSky ? skyColor : null;
-  milky.material.uniforms.intensity.value = 0.55 * starFade.value;
+  milkyIntensity.value = 0.55 * starFade.value;
   constLines.children.forEach((lines) => { lines.material.opacity = 0.45 * starFade.value; });
 }
 let last = performance.now();
@@ -1552,6 +1538,7 @@ function frame(now) {
   belt.position.copy(camWorld).negate();
   belt.material.uniforms.dt.value = d - asteroidEpoch;
 
+  if (loaded) updateMilkyTiles(camera);
   renderer.render(scene, camera);
   updateLabels();
   updateHud(now);
