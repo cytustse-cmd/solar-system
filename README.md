@@ -7,6 +7,7 @@
 - 实时数据：全球云图（matteason/live-cloud-maps）、NASA SDO/HMI 太阳图像（GitHub Actions 每 15 分钟抓取）
 - 恒星：依巴谷星表；纹理：NASA Blue Marble、Solar System Scope（CC BY 4.0）
 - 银河：[ESA/Gaia/DPAC](https://sci.esa.int/web/gaia/-/the-colour-of-the-sky-from-gaia-s-early-data-release-3-equirectangular-projection)，致谢 A. Moitinho。[CC BY-SA 3.0 IGO](https://creativecommons.org/licenses/by-sa/3.0/igo/)；将 16K 原图重新投影、调整亮度并切片，衍生贴图使用同一许可。加载占位图：[ESO/S. Brunier](https://www.eso.org/public/images/eso0932a/)（[CC BY 4.0](https://www.eso.org/public/outreach/copyright/)）。
+- 地球近景：[EOxCloudless](https://cloudless.eox.at/) by EOX IT Services GmbH (Contains modified Copernicus Sentinel data 2016)，[CC BY 4.0](https://creativecommons.org/licenses/by/4.0/)。WGS84 卫星图最高使用第 14 级（约 10 m/像素，取决于纬度和源数据）；保持太阳照明，低空逐渐淡出云层。卫星图直接从 EOX 请求，不写入站点离线缓存；加载中或离线时显示 NASA Blue Marble 全球底图。
 
 本地运行：`python3 server.py 8080`，然后打开 http://localhost:8080/
 

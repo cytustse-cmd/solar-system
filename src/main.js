@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import * as EPH from './ephemeris.js';
 import * as ISS from './iss.js';
 import { createMilkyWay } from './milkyway.js';
+import { createEarthTiles, earthTileShader } from './earth-tiles.js';
 
 const DEG = Math.PI / 180;
 const C_KMS = 299792.458;
@@ -246,21 +247,25 @@ function loadLiveClouds() {
     cloudState.live = true;
   }, undefined, () => { cloudState.live = false; });
 }
+const earthTiles = createEarthTiles(isTouch);
+const earthCredit = document.getElementById('earthCredit');
 function makeEarth(b) {
   const staticClouds = tex('earth_clouds_4k.jpg', false);
   const mat = new THREE.ShaderMaterial({
-    uniforms: { ...earthEclipse, dayMap: { value: null }, nightMap: { value: tex('earth_night_4k.jpg') },
+    defines: earthTiles.defines,
+    uniforms: { ...earthEclipse, ...earthTiles.uniforms, dayMap: { value: null }, nightMap: { value: tex('earth_night_4k.jpg') },
       specMap: { value: tex('earth_spec_4k.jpg', false) }, normalMap: { value: tex('earth_normal_4k.jpg', false) },
-      cloudMap: { value: staticClouds }, alphaChan: { value: 0 },
+      cloudMap: { value: staticClouds }, alphaChan: { value: 0 }, cloudFade: { value: 1 },
       sunDir: { value: new THREE.Vector3(1, 0, 0) }, pole: { value: new THREE.Vector3(0, 1, 0) } },
     vertexShader: VS_WORLD,
     fragmentShader: /* glsl */`
 #include <common>
 #include <logdepthbuf_pars_fragment>
 uniform sampler2D dayMap; uniform sampler2D nightMap; uniform sampler2D specMap; uniform sampler2D normalMap;
-uniform sampler2D cloudMap; uniform float alphaChan; uniform vec3 sunDir; uniform vec3 pole;
+uniform sampler2D cloudMap; uniform float alphaChan; uniform float cloudFade; uniform vec3 sunDir; uniform vec3 pole;
 varying vec2 vUv; varying vec3 vN; varying vec3 vW;
 ${ECLIPSE}
+${earthTileShader}
 void main() {
   #include <logdepthbuf_fragment>
   vec3 n0 = normalize(vN);
@@ -271,11 +276,11 @@ void main() {
   vec3 v = normalize(cameraPosition - vW);
   float ndl0 = dot(n0, sunDir);
   float ndl = dot(n, sunDir);
-  vec3 day = texture2D(dayMap, vUv).rgb;
+  vec3 day = earthDayColor(texture2D(dayMap, vUv).rgb, vN);
   vec3 night = texture2D(nightMap, vUv).rgb;
   float water = texture2D(specMap, vUv).r;
   vec4 cs = texture2D(cloudMap, vUv);
-  float cloud = pow(mix(cs.r, cs.a, alphaChan), 1.5) * 0.85;
+  float cloud = pow(mix(cs.r, cs.a, alphaChan), 1.5) * 0.85 * cloudFade;
   float lit = clamp(mix(ndl0, ndl, smoothstep(0.0, 0.15, ndl0)), 0.0, 1.0);
   float dayMix = smoothstep(-0.08, 0.08, ndl0);
   float light = sunlight();
@@ -292,19 +297,20 @@ void main() {
   b.mat = mat;
   const mesh = new THREE.Mesh(sphereGeo, mat);
   const clouds = new THREE.Mesh(sphereGeo, new THREE.ShaderMaterial({
-    uniforms: { ...earthEclipse, cloudMap: { value: staticClouds }, alphaChan: { value: 0 }, sunDir: mat.uniforms.sunDir },
+    uniforms: { ...earthEclipse, cloudMap: { value: staticClouds }, alphaChan: { value: 0 },
+      sunDir: mat.uniforms.sunDir, cloudFade: mat.uniforms.cloudFade },
     vertexShader: VS_WORLD,
     fragmentShader: /* glsl */`
 #include <common>
 #include <logdepthbuf_pars_fragment>
-uniform sampler2D cloudMap; uniform float alphaChan; uniform vec3 sunDir;
+uniform sampler2D cloudMap; uniform float alphaChan; uniform float cloudFade; uniform vec3 sunDir;
 varying vec2 vUv; varying vec3 vN; varying vec3 vW;
 ${ECLIPSE}
 void main() {
   #include <logdepthbuf_fragment>
   vec4 cs = texture2D(cloudMap, vUv);
   float a = mix(cs.r, cs.a, alphaChan);
-  a = pow(a, 1.5) * 0.85;
+  a = pow(a, 1.5) * 0.85 * cloudFade;
   float ndl = dot(normalize(vN), sunDir);
   float lit = smoothstep(-0.1, 0.25, ndl) * (0.25 + 0.75 * clamp(ndl, 0.0, 1.0)) * sunlight() + 0.004;
   vec3 c = mix(vec3(1.0, 0.75, 0.6), vec3(1.0), smoothstep(-0.05, 0.12, ndl)) * lit;
@@ -740,7 +746,7 @@ function updateEphemeris() {
   const apparent = nav.mode === 'sky' || $('optApparent').checked;
   const { t, P, gal, cometDistance, jupiterTime } = EPH.state(time.ms, apparent);
   for (const b of BODIES) {
-    if (b.id === 'earth' && nav.mode === 'sky') { setBasis(b, EPH.earthFixed(t)); continue; }
+    if (b.id === 'earth') { setBasis(b, EPH.earthFixed(t)); continue; }
     const o = EPH.orient(b.id, t);
     if (o) {
       setBasis(b, EPH.axesEcl(o[0], o[1], o[2]));
@@ -1538,6 +1544,11 @@ function frame(now) {
   belt.position.copy(camWorld).negate();
   belt.material.uniforms.dt.value = d - asteroidEpoch;
 
+  const cloudFade = THREE.MathUtils.smoothstep(B.earth.rel.length() - B.earth.R, 150, 800);
+  B.earth.mat.uniforms.cloudFade.value = cloudFade;
+  B.earth.clouds.visible = cloudFade > 0;
+  earthTiles.update(now, camera, B.earth, renderer.domElement.height, loaded && !inSky);
+  earthCredit.classList.toggle('hidden', earthTiles.uniforms.earthTileCount.value === 0);
   if (loaded) updateMilkyTiles(camera);
   renderer.render(scene, camera);
   updateLabels();

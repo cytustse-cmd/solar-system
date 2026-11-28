@@ -1,9 +1,10 @@
 const PREFIX = 'solar-system-';
-const CACHE = PREFIX + 'v2';
+const CACHE = PREFIX + 'v3';
 const scope = new URL(self.registration.scope);
 const SHELL = [
-  './', './index.html', './style.css', './src/main.js', './src/ephemeris.js', './src/iss.js', './src/milkyway.js',
+  './', './index.html', './style.css', './src/main.js', './src/ephemeris.js', './src/iss.js', './src/milkyway.js', './src/earth-tiles.js',
   './vendor/three.module.js', './vendor/astronomy.js', './vendor/satellite.es.js', './data/sky.json',
+  './textures/2k/earth_day_01.jpg',
 ];
 
 self.addEventListener('install', (event) => event.waitUntil((async () => {
@@ -34,10 +35,16 @@ self.addEventListener('fetch', (event) => {
 
   const response = cached.then((hit) => hit || fresh.then((result) => result.response));
   const texture = path.startsWith('textures/') && request.destination === 'image';
-  event.respondWith(texture ? response.catch(() => new Response(
-    '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"><path fill="#687083" d="M0 0h1v1H0z"/></svg>',
-    { headers: { 'Content-Type': 'image/svg+xml' } },
-  )) : response);
+  event.respondWith(texture ? response.catch(async () => {
+    if (/^textures\/(2k\/)?earth_day_\d\d\.jpg$/.test(path)) {
+      const fallback = await (await cache)?.match(new URL('./textures/2k/earth_day_01.jpg', scope));
+      if (fallback) return fallback;
+    }
+    return new Response(
+      '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"><path fill="#687083" d="M0 0h1v1H0z"/></svg>',
+      { headers: { 'Content-Type': 'image/svg+xml' } },
+    );
+  }) : response);
   event.waitUntil(Promise.all([cache, fresh]).then(([c, result]) => {
     if (c && result?.copy) return c.put(request, result.copy);
   }).catch(() => {}));
